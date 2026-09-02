@@ -218,9 +218,6 @@ Wrapper mechanics (all /qf-hardened; filter order INVERTED to name-first by impl
 - **Disabled fast path** = 1 relaxed atomic load + predicted-not-taken branch + tail-call (the eternal
   solo-SP tax — STEP 1.0 measures it on real 0x45 volume). Active = peek + name compare (O(1)).
   `atomic<bool>` enabled flags (OnDisconnect disables via the full teardown fanout). **ONLY 0x45 is
-  swapped** (impl /qf R11 — 0x46 has ZERO measured customer; its wrapper is written but the slot stays
-  un-swapped until a measured 0x46 customer registers; install is gated on ≥1 registered consumer PER
-  OPCODE, so no un-measured process-lifetime tax on `EX_LocalFinalFunction` game-wide). **Process-
   lifetime swap by SIMPLICITY, not necessity** (impl /qf R13): the wrapper is process-static code (our
   DLL never unloads mid-session, RULE-3) so un-swapping the table pointer is SAFE — a late cross-thread
   call to the un-swapped-but-static wrapper just runs it inert once (disabled → tail-call), no crash.
@@ -577,6 +574,7 @@ EXPLICITLY includes: the auto-repatch pipeline (structural kismet signature matc
 transform → re-pak; boot-time hash check in the DLL) as a MANDATORY component, the pak-hash
 handshake gate, and the CLAUDE.md amendment. **Pipeline scope is priced from the C-spike's
 measurements, never estimated ahead.**
+
 
 ## 7. Workaround retirement inventory (RULE 2, post-substrate; user mandate)
 
