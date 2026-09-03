@@ -1,3 +1,4 @@
+<!-- corr-accretion: register -->  <!-- the ledger of corrections; every row IS one, so its hits are its subject -->
 # LESSONS — what VOTV_MP has learned the hard way
 
 
