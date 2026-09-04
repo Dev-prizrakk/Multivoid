@@ -140,6 +140,7 @@ not even corrected promptly; it stands until the host's own state next moves, th
 Silent divergence, not a visible failure.
 
 
+
 ### J4 — a client collects reports by hand: ENTIRELY UNSYNCED (mechanism `[V]`, symptom `[RD]`)
 
 `[V]` `AserverBox_C` carries the SAME floppy triple as the kerfur — `floppyType`,
