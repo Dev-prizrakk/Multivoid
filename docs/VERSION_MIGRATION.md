@@ -525,6 +525,7 @@ record: `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`
 > tripwire baseline (newest upstream STABLE, still 3.0.1) and our install pin are
 > now separate quantities — do not conflate them. Full record + the two rejected
 > sources: `docs/UE4SS_ARC.md` §9.6.
+
 Wire repurposing: wire-b now watches the PIN (a newer stable = an upgrade
 decision, not a switch trigger); wire-a now affects contributor convenience
 only. Both tripwires keep running until the migration ships, then retire with

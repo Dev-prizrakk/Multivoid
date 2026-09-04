@@ -575,7 +575,6 @@ transform → re-pak; boot-time hash check in the DLL) as a MANDATORY component,
 handshake gate, and the CLAUDE.md amendment. **Pipeline scope is priced from the C-spike's
 measurements, never estimated ahead.**
 
-
 ## 7. Workaround retirement inventory (RULE 2, post-substrate; user mandate)
 
 RETIRED by the kerfur assembler (one commit, §5): stamps · destroy-edge capture · take-8

@@ -11,6 +11,10 @@ of the arc is the project's standing one: **measure, don't infer** — every cos
 so each symptom gets an attributed mechanism, and each mechanism a root-cause fix (RULE 1 — no
 "good enough", no suppressive band-aids like "just lower settings").
 
+Related arcs: `docs/UE4SS_ARC.md` §9 (the loader-build fps study — CLOSED, pin moved). The listener
+seam below (the engine's own FUObjectArray create/delete callbacks) is the root-cause fix for the
+polling-scan cost class named here, and it is tracked in this arc. The born-rule for post-ship perf audits and
+the audit vocabulary: `reference/agency-agents/audit-prompt-perf-template.md`.
 
 ---
 
@@ -29,6 +33,11 @@ Mechanism analysis (what imports could and could not change):
      of ns; at the measured ~170k dispatches/s (see §2) the chain overhead is sub-ms/s territory —
      but our DETOUR BODY is not free (see §2: ~1.0 ms/frame total dispatch cost) and that body is
      ours to optimize regardless of imports.
+  2. **Reflection lookups.** UE4SS keeps an object cache fed by FUObjectArray listeners
+     (`bUseUObjectArrayCache`); we walk `GUObjectArray` (measured 1.1–1.6 ms per full walk, §2).
+     This is the one real performance GAP between the substrates — and it is closable WITHOUT
+     imports, by registering on the engine's own listener seam (+0x68/+0x78) exactly as UE4SS does
+     The gap is "our cache is unbuilt", not "imports are missing".
   3. **What imports would COST:** UE4SS's PE callback cannot cancel a call (void return, no skip) —
      we cancel ~20 native calls by design, so option C is architecturally dead
      (`docs/UE4SS_ARC.md` §4). The imports question is therefore not a fork we could take even if
@@ -402,6 +411,15 @@ already uses; (b) `FindClassDefaultObject` should read `UClass::ClassDefaultObje
 4.27, not yet in the profile — self-verifying probe: the pointee's name starts `Default__`) and
 never walk at all.**
 
+**F4 — the by-CLASS walkers stay O(all objects) even cache-warm.** `[V]` `FindObjectByClass` /
+`FindObjectsByClass` / `CountObjectsByClass` (`reflection.cpp:576-677`) walk all ~237k slots with
+pointer compares once `BeginClassWalk` primed the class — ~1M scattered reads ≈ the measured
+1.1–1.6 ms per call. This is the class the `[WALK-TIME]` instrument exists for. **Fix shape (root):
+the event-driven per-class instance index fed by the engine's OWN FUObjectArray create/delete
+listener seam (+0x68/+0x78, delete ops under the engine's +0x88 lock). Zero-import, zero steady-state
+walks; the world stamp + kill-flag semantics stay (the index is a candidate set, liveness still
+checked per read).** Until it lands, the interim rule stands: no per-frame call sites (census in
+§4-A decides how many exist today).
 
 **F5 — the pump architecture is sound.** `[V]` Queue-empty probe is lock-free (TLS + one acquire
 load, `game_thread.cpp:41-51`); the mutex is taken only per posted task (~60–125/s) and per drain
@@ -514,6 +532,7 @@ appetite (2026-09-02: "Я давно хотел с мусором pile типа 
 | Q5 | per-frame fan-out hygiene: interactable channels get the grime 50 ms throttle + pointer scratch; npc/world-actor mirror drives interp-gate their PE writes when rested; dish 24-slot scan gates on window-open; ParkWalk attempt cap; pause_guard → event-driven (A) | client-heavy per-frame CPU | trims the client's structural CPU excess |
 | Q6 | batch-pose lanes → fixed arrays; reliable inbox → SPSC ring + bounded per-tick drain; reassembly reserve-with-cap (C-HIGH) | steady + join allocs | 180 cross-thread mallocs/s → 0; the ~2,300-msg one-frame join spike → bounded |
 | Q7 | `FindFunction` → Children-chain walk + result cache (F2) — also de-fangs every positive-only latch drift | substrate primitive | ~1.3 ms → µs cold, O(1) warm; 522 sites |
+| Q8 | per-class instance index on the engine listener seam (F4) + `SnapshotActorsByType` per-type index | retires the walk class + registry scans long-term | scan hub's ~1 ms budget slices + 65k-slot scans → event-driven |
 | Q9 | FName index-compare + `ClassDefaultObject` direct read (F3); reseed drain caches the `Default__` verdict per class (A#4); ParamFrame small-buffer/arena + prebound frames (F7) | substrate primitive | retires the alloc+free-per-compare class; halves the reseed floor; ~9k marshalling allocs/s → ~0 |
 | Q10 | SEH absorb-rate 1 Hz diag + latch pump/Func-thunk fault logs (C); UE4SS ini: `bUseUObjectArrayCache=false` pending arm 3a (B-FIND-1) | observability + config | storms name themselves; rig matches field config |
 | Q-M1 | detour fast-path cache-line packing + combined Bloom (F1) | micro (~0.3 ms/frame) | after the above |
@@ -539,3 +558,11 @@ The §9 discipline is the template, plus its two instrument lessons baked in:
 
 ## 7. Log
 
+- **2026-09-02:** arc opened. Prior art consolidated (§2), field intake seeded (§3), four census
+  agents launched and LANDED same day (§4-A/B/C/D). other arcs deferred by the user in favor of
+  this arc. Substrate deep-read done in the main session (§4a F1-F8: every ue_wrap/core hot TU
+  read line-by-line). H-IMPORTS closed NO at mechanism level; H-CLIENT-ASYM confirmed = C2's true
+  price; H-REJOIN resolved (persistent pin closed + shipped; residue = §4-D gaps); H-OVERLAY
+  confirmed (voice-pinned gate); H-LOG-IO confirmed conditional. Fix queue ranked Q1-Q10 + micro.
+  USER same day: C2/piles redesign appetite confirmed → Q1. NOTHING BUILT YET — this arc's first
+  build lands after the Q1 design pass (/qf) or as the small Q2/Q3 items, user's pick.

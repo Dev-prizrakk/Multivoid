@@ -140,6 +140,11 @@ still reports it down. **And the host broadcasts ON CHANGE only** — so the cli
 not even overwritten promptly; it stands until the host's own state next moves, then is stomped.
 Silent divergence, not a visible failure.
 
+Root: the fix verb is `EX_LocalVirtualFunction` — invisible to BOTH the ProcessEvent detour and the
+Func patch (measured when the lane was built). This is precisely the class `COOP_SYNC_DOCTRINE`
+step 3 tier 4 (the reserved script-body-gate tier) would close with args + cancel. **This job is
+a first-class consumer of that pending decision, and a stronger argument for it than anything listed
+there today.**
 
 
 ### J4 — a client collects reports by hand: ENTIRELY UNSYNCED (mechanism `[V]`, symptom `[RD]`)
@@ -295,6 +300,12 @@ that was never built, on a base that is parked.**
 - The macro-goal's real content is **three unbuilt/one-directional lanes**, not robot polish.
 - **J3 and J4 share a root with each other** (the server is one actor holding both), and **J4 shares
   its root with the robot's `get_reports`** (the same floppy fields). One design covers three jobs.
+- **J5 does NOT share their shape.** J3/J4 are outcome-intent lanes; J5 needs the host's RNG mirrored
+  first, because the work itself is per-peer random. Designing all three as one lane would be wrong —
+  design J3+J4 together, J5 on its own.
+- **The reserved script-body-gate tier gains a named consumer in J3**, with a
+  user-visible symptom — a stronger argument than anything listed there. It remains an upgrade, not
+  a precondition.
 
 ### The three seams, side by side
 
@@ -665,6 +676,9 @@ touching W1 — it is the reason W1 is PARKED rather than in progress.
 
 ### The verdict
 
+**W1 waits on the reserved script-body-gate tier.** Not on scope, not on the syncer
+model, not on an address for `Aactor_save_C` — all three of those were proposed as the blocker and
+all three were measured wrong. The reason is narrow and it is RULE 2:
 
 
 
@@ -718,6 +732,12 @@ on-disk `.sav`, and `getData` persists all five floppy fields — so a joiner DO
 floppy. The undefined window is only **join-request -> `ClientWorldReady`**. (An earlier claim here
 that a joiner "sees an empty slot forever" was FALSE.)
 
+**J4's identity-at-birth question.** `[V]` `insertFloppy` (`:644`) ends in `K2_DestroyActor`;
+`ejectFloppy` (`:688-706`) runs `BeginDeferredActorSpawnFromClass` + `FinishSpawningActor`, then
+reconstitutes the disc from the server's own persisted strings. The DATA is safe; the BIRTH is a
+deferred static, the class `COOP_DISPATCH_VISIBILITY` calls invisible. Under act-as-host the HOST
+runs the eject, so the spawn rides the normal host-authored birth path — the engine listener seam would make
+it cleaner but does not gate W1.
 
 
 **The blast radius, censused** `[V]`: 14 blueprints reference `serverBox` — including BOTH robots
