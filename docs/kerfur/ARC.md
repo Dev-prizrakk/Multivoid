@@ -666,6 +666,8 @@ touching W1 — it is the reason W1 is PARKED rather than in progress.
 ### The verdict
 
 
+
+
 Without WP-1, J3 must ship as **forward-and-reconcile** — a client's uncancellable local `fix()`
 produces a phantom the host corrects. That build requires (a) a phantom-correction path and (b) a
 heuristic to tell a player's `fix()` from a robot's at the `0x45` seam, which observes the verb and
