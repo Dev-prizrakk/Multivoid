@@ -155,6 +155,8 @@ and files ending in `-DESIGN-<date>` are point-in-time plans that are **delibera
 to an `_archive/` folder rather than being deleted, so an abandoned approach can never be mistaken
 for the live one.
 
-Some pointers in these docs lead to `research/` or `docs/security/`. Those resolve in the
-maintainer's working tree and not on GitHub — both are kept unpublished on purpose
-(the local-only docs-arc note says why). That is not a broken link.
+Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`
+or `.claude/skills/`. Those resolve in the maintainer's working tree and not on GitHub — all are
+kept unpublished on purpose (the local-only docs-arc note says why). That is not a broken link.
+The last two joined them on 2026-09-04: an internal session-close ritual and its working record
+are addressed to the maintainer's tooling, not to a reader of this repo.
