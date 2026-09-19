@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 164;
+inline constexpr uint16_t kProtocolVersion = 165;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -799,6 +799,9 @@ struct PoseSnapshot {
 };
 static_assert(sizeof(PoseSnapshot) == 32, "PoseSnapshot must be 32 bytes");
 
+// PropSpawnPayload.hasMatchPos values.
+namespace match_form { constexpr uint8_t kNone = 0; constexpr uint8_t kPile = 1; constexpr uint8_t kClump = 2; }
+
 // PoseSnapshot.stateBits flags. Single-byte field; flags assigned bit-by-bit.
 inline constexpr uint8_t kStateBitInAir   = 0x01;
 inline constexpr uint8_t kStateBitRagdoll = 0x02;  // the source is ragdolled (faint, manual, knock-out), not dead
@@ -1171,7 +1174,8 @@ struct PropSpawnPayload {
     float         scaleX, scaleY, scaleZ;      // 12 -- the sender's actor scale (part of the saved transform)
     uint8_t       physFlags;        // 1
     uint8_t       chipType;         // 1  -- the trash variant (enum_chipPileType); 0 for other props
-    uint8_t       hasMatchPos;      // 1  -- matchX/Y/Z carry this pile's save-time position
+    uint8_t       hasMatchPos;      // 1  -- match_form: matchX/Y/Z carry this trash entity's save-time position,
+                                    //       and the value is the FORM the joiner loaded there
     uint8_t       _pad;             // 1
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- initial velocity (cm/s), usually zero
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
@@ -1181,7 +1185,10 @@ struct PropSpawnPayload {
     // For a pile in a join snapshot: the pile's position at scratch-save time, which both peers loaded
     // from the same transferred save. The client's twin-destroy matches its save-loaded native against
     // this rather than the current pose, so a pile the host moved during the join window is
-    // reconciled instead of duplicated. Valid iff hasMatchPos.
+    // reconciled instead of duplicated. Valid iff hasMatchPos. The entity may have changed form since
+    // the save (a pile grabbed in the window is a clump now; a clump that landed is a pile), so the
+    // field says which form the joiner's own copy has: only a copy of the row's own form is bound,
+    // and one of the other form is the stale twin of an entity that is expressed beside it.
     float         matchX, matchY, matchZ;   // 12 -- save-time position (world cm); valid iff hasMatchPos
     WirePileLook  look;                     // 12 -- a chip pile's visible mesh; absent (sclX 0) for anything else
 };

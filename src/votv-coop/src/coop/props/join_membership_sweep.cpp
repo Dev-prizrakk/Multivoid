@@ -107,9 +107,9 @@ static void RunDivergenceSweep_(void* localPlayer) {
         return;
     }
     // The universe is what the host snapshot can express a binding for: keyed interactables and the
-    // keyless chipPile lineage (eid-expressed), plus the wire-suppressed intermediate the client
-    // already destroys on sight while connected. A keyless non-pile (a held clump mid-flight, a
-    // pre-Init Aprop_C, an event clump whose setKey never sticks) is outside it and never swept.
+    // keyless trash lineage (a chip pile or a garbage clump at rest, eid-expressed), plus the
+    // wire-suppressed intermediate the client already destroys on sight while connected. Any other
+    // keyless actor (a pre-Init Aprop_C) is outside it and never swept.
     // The candidates are the client's own local Prop elements from the registry, never a
     // GUObjectArray scan: deletion by tracked membership, as MTA's CElementGroup iterates its
     // member list rather than the world. So a host-driven mirror is excluded at the source (a
@@ -166,7 +166,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         // host expressed and never swept; membership alone would doom it, and the sweep once
         // destroyed the client's inventory container, which fataled at the next GC purge.
         if (coop::prop_lifecycle::IsPerPlayerPropClass(acls)) continue;
-        if (ue_wrap::prop::IsChipPile(a)) {            // expressible keyed OR keyless (eid lane)
+        if (ue_wrap::prop::IsTrashActor(a)) {          // a pile or a clump at rest: expressible on the eid lane
             doomed.push_back(a);
             doomedClass.push_back(acls);
             ++doomedByClass[acls];

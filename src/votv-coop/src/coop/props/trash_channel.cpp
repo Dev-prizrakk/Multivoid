@@ -106,14 +106,11 @@ std::string NarrowAscii(const std::wstring& w) {          // BP class names are 
     return s;
 }
 
-// The single convert send primitive, which bumps the context. OnHostConvert calls it for the
-// open (the real grab) and the not-carrying land; the tick calls it for the settle commit (the
-// real land). `why` is a log tag.
-uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind,
-                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
-                         const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls,
-                         const char* why) {
-    const uint8_t ctx = Bump(static_cast<uint32_t>(E));
+// The one convert payload: every field a convert carries, at the context given.
+coop::net::PropConvertPayload BuildConvert(coop::element::ElementId E, uint8_t kind, uint8_t ctx,
+                                           const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
+                                           const ue_wrap::FVector& scale, uint8_t chipType,
+                                           const std::string& cls) {
     coop::net::PropConvertPayload p{};
     p.oldEid = static_cast<uint32_t>(E);                  // bind model: oldEid == newEid == E
     p.newEid = static_cast<uint32_t>(E);
@@ -154,6 +151,18 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
             p.hasMatchPos = 1;
         }
     }
+    return p;
+}
+
+// The single convert BROADCAST, which bumps the context. OnHostConvert calls it for the open
+// (the real grab) and the not-carrying land; the tick calls it for the settle commit (the real
+// land). `why` is a log tag.
+uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind,
+                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
+                         const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls,
+                         const char* why) {
+    const uint8_t ctx = Bump(static_cast<uint32_t>(E));
+    const coop::net::PropConvertPayload p = BuildConvert(E, kind, ctx, loc, rot, scale, chipType, cls);
     s.SendReliable(coop::net::ReliableKind::PropConvert, &p, sizeof(p));
     UE_LOGI("[TRASH-CH] HOST BROADCAST %s eid=%u ctx=%u (%s) at (%.1f,%.1f,%.1f) variant=%u%s",
             kind == coop::net::propconvert_kind::kToClump ? "ToClump" : "ToPile",
@@ -267,6 +276,20 @@ void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newCl
     coop::puppet_carry_drive::OnTakenOver(E);
     UE_LOGI("[TRASH-CH] HOST carry re-grab eid=%u -- rebound onto the new held clump, settle cancelled "
             "(churn, not the land)", eid);
+}
+
+void ExpressClumpGeneration(coop::net::Session& s, coop::element::ElementId E, void* clump, int slot) {
+    if (E == 0u || E == coop::element::kInvalidId || !clump) return;
+    uint8_t& ctx = g_ctx[static_cast<uint32_t>(E)];
+    if (ctx == 0) ctx = 1;   // born here, with the expression below: never a generation nobody was told of
+    const coop::net::PropConvertPayload p = BuildConvert(
+        E, coop::net::propconvert_kind::kToClump, ctx, ue_wrap::engine::GetActorLocation(clump),
+        ue_wrap::engine::GetActorRotation(clump), ue_wrap::engine::GetActorScale3D(clump),
+        ue_wrap::prop::GetChipType(clump), NarrowAscii(R::ClassNameOf(clump)));
+    if (slot >= 0) s.SendReliableToSlot(slot, coop::net::ReliableKind::PropConvert, &p, sizeof(p));
+    else           s.SendReliable(coop::net::ReliableKind::PropConvert, &p, sizeof(p));
+    UE_LOGI("[TRASH-CH] HOST clump generation eid=%u ctx=%u -> %s (behind its row; no bump)",
+            static_cast<unsigned>(E), static_cast<unsigned>(ctx), slot >= 0 ? "the joining slot" : "every ready peer");
 }
 
 void* LiveActorOf(coop::element::ElementId E) {

@@ -123,6 +123,12 @@ std::unordered_set<std::wstring> g_blobKeys[coop::net::kMaxPeers];
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobPileXforms[coop::net::kMaxPeers];
 
+// The same for every live garbage clump at the capture instant: a clump at rest is in the save as
+// a clump, so the joiner loads its own copy there. A map of its own: what reads the pile map (the
+// position flush, a land convert's key) means a PILE at that key.
+std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
+    g_blobClumpXforms[coop::net::kMaxPeers];
+
 // The save-time position of every live off-form kerfur at the capture instant, by host eid; the
 // host stamps it onto a KerfurConvert at a window turn-on so the client retires its stale local
 // off-prop at the exact key. It outlives the snapshot (window turn-ons fire during the client's
@@ -508,6 +514,8 @@ void OnRequest(int peerSlot) {
             // the live pose.
             g_blobPileXforms[peerSlot].clear();
             coop::prop_element_tracker::CollectTrackedPileTransforms(g_blobPileXforms[peerSlot]);
+            g_blobClumpXforms[peerSlot].clear();
+            coop::prop_element_tracker::CollectTrackedClumpTransforms(g_blobClumpXforms[peerSlot]);
             // Every live off-form kerfur's save-time position at this same instant, for a window
             // turn-on's KerfurConvert.
             g_blobKerfurXforms[peerSlot].clear();
@@ -600,6 +608,7 @@ void CancelForSlot(int peerSlot) {
     coop::email_sync::CancelJoinSnapshot(peerSlot);
     g_blobKeys[peerSlot].clear();  // the unconsumed blob baseline
     g_blobPileXforms[peerSlot].clear();  // and the save-time maps
+    g_blobClumpXforms[peerSlot].clear();
     g_blobKerfurXforms[peerSlot].clear();
     g_blobKeyedXforms[peerSlot].clear();
     g_pileFlushArmUntil[peerSlot] = {};        // disarm the late flush and drop its dedupe baselines
@@ -612,6 +621,17 @@ void CancelForSlot(int peerSlot) {
 bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out) {
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
     const auto& m = g_blobPileXforms[peerSlot];
+    auto it = m.find(eid);
+    if (it == m.end()) return false;
+    out = it->second;
+    return true;
+}
+
+// The save-time position of clump `eid` for this joiner: the entity was a CLUMP in the save this
+// joiner loaded, so its own copy of it is a clump at this key. Game thread.
+bool TryGetSaveTimeClumpXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out) {
+    if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
+    const auto& m = g_blobClumpXforms[peerSlot];
     auto it = m.find(eid);
     if (it == m.end()) return false;
     out = it->second;

@@ -52,6 +52,7 @@ struct PileBindCandidate {
                   // index lives for the whole multi-second bracket)
     float   x, y, z;
     uint8_t chipType;
+    bool    isClump;  // the entity's other resting form: a row binds a native of its own form only
 };
 std::vector<PileBindCandidate> g_pileBindIndex;
 bool g_pileBindIndexBuilt = false;
@@ -83,7 +84,8 @@ void EnsureIndex(const std::unordered_set<void*>& claimed) {
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        if (!ue_wrap::prop::IsChipPile(obj)) continue;  // lineage test, pure pointer walks
+        const bool isClump = ue_wrap::prop::IsGarbageClump(obj);         // lineage tests, pure pointer walks
+        if (!isClump && !ue_wrap::prop::IsChipPile(obj)) continue;
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
         if (claimed.count(obj)) continue;  // already bound earlier this bracket
@@ -98,11 +100,13 @@ void EnsureIndex(const std::unordered_set<void*>& claimed) {
         // a harmless fallback to fresh-spawn+sweep, never a wrong bind.
         g_pileBindIndex.push_back(
             {obj, R::InternalIndexOf(obj), loc.X, loc.Y, loc.Z,
-             ue_wrap::prop::GetChipType(obj)});
+             ue_wrap::prop::GetChipType(obj), isClump});
     }
     g_pileIndexBuiltCount = static_cast<int>(g_pileBindIndex.size());  // census valve denominator (pre-consume size)
-    UE_LOGI("pile_spawn_bind: pile-bind index built -- %zu local chipPile candidate(s)",
-            g_pileBindIndex.size());
+    int clumpN = 0;
+    for (const auto& c : g_pileBindIndex) if (c.isClump) ++clumpN;
+    UE_LOGI("pile_spawn_bind: pile-bind index built -- %zu local chipPile candidate(s), %d garbage clump(s)",
+            g_pileBindIndex.size() - static_cast<size_t>(clumpN), clumpN);
 }
 
 // [PILE-DELTA] dark probe on a bind MISS: during the join bracket every expression names a LEVEL
@@ -157,9 +161,11 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // from g_pileBindIndex on a match (lines below), which the non-mutating index-return kernel cannot
     // model; keep it inline. The 1cm + ambiguous(>1)->skip policy is the same as the shared kernel.
     constexpr float kBindR2Cm = coop::save_time_retire_util::kExactMatchR2Cm;  // 1 cm^2 -- bit-exact twin
+    const bool wantClump = ue_wrap::prop::IsClumpClassName(classW);
     int matchCount = 0, matchIdx = -1;
     for (int i = 0; i < static_cast<int>(g_pileBindIndex.size()); ++i) {
         const auto& c = g_pileBindIndex[i];
+        if (c.isClump != wantClump) continue;                  // a native of the row's own form only
         const float dx = c.x - matchPos.X, dy = c.y - matchPos.Y, dz = c.z - matchPos.Z;
         if (dx * dx + dy * dy + dz * dz > kBindR2Cm) continue;
         if (c.chipType != payload.chipType) continue;          // same trash variant only
@@ -173,7 +179,8 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // host has a pile the client can neither see nor aim at.
     auto armAndFail = [&](const char* why) -> void* {
         if (isSaveTimeKey && payload.elementId != 0)
-            coop::element::quiescence_drain::ArmPendingSaveTimeTwin(payload.elementId, matchPos, payload.chipType);
+            coop::element::quiescence_drain::ArmPendingSaveTimeTwin(payload.elementId, matchPos, payload.chipType,
+                                                                    wantClump);
         else
             UE_LOGW("[PILE] BIND eid=%u at (%.1f,%.1f,%.1f) -- %s, and the expression carries no "
                     "save-time key to retry from", payload.elementId, matchPos.X, matchPos.Y, matchPos.Z, why);
@@ -226,6 +233,15 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
 
 void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why) {
     if (!native || eid == 0u) return;
+    // A bound PILE is a Static, inert actor. A bound CLUMP is a ticking, simulating body, and from
+    // this bind the host authors its pose and its turn back into a pile: left as loaded it is a
+    // second author of both (it rolls and is pushed on this peer alone). The same two parkings a
+    // spawned clump mirror gets (trash_mirror::Materialize); its collision stays, because a clump
+    // at rest is aimed at and stood on like the host's.
+    if (ue_wrap::prop::IsGarbageClump(native)) {
+        ue_wrap::engine::SetActorTickEnabled(native, false);      // a clump's tick wakes its body every second
+        ue_wrap::engine::SetActorSimulatePhysics(native, false);  // kinematic: the host drives it
+    }
     // The claim: this actor was expressed on the wire this bracket, so the membership sweep must
     // not destroy it. Without it an entire host-expressed class claims zero and the sweep's
     // completeness floor reads that as the host under-expressing. Outside a bracket it is a no-op.
@@ -263,7 +279,7 @@ void LogCensus() {
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsChipPile(o)) continue;                   // real actorChipPile_C only
+        if (!ue_wrap::prop::IsTrashActor(o)) continue;                 // what the index holds: piles and clumps at rest
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
         ++totalLive;
         const bool isBound = coop::prop_element_tracker::IsBoundMirrorNative(o);
@@ -294,7 +310,7 @@ void LogCensus() {
         if (verbose)
             UE_LOGI("[PILE-CENSUS] orphan native @(%.1f,%.1f,%.1f) nearestBound_d=%.1fcm", a.x, a.y, a.z, d);
     }
-    UE_LOGI("[PILE-CENSUS] %d live native chipPile(s) (of %d indexed at the burst): %d BOUND to a host "
+    UE_LOGI("[PILE-CENSUS] %d live native trash actor(s), piles and clumps (of %d indexed at the burst): %d BOUND to a host "
             "eid, %d orphan -- le5=%d (near-miss) 5_30=%d (ambiguous) gt30=%d (moved/true orphan) "
             "noBound=%d (nothing of the host's nearby)",
             totalLive, g_pileIndexBuiltCount, bound, orphan, le5, mid, gt30, none);

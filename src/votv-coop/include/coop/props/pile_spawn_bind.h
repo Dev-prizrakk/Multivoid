@@ -30,7 +30,8 @@ namespace coop::pile_spawn_bind {
 // drain at quiescence / steady-state), cleared only at session teardown.
 void Reset();
 
-// Bind the client's own save-loaded native for the pile expression `payload`: match it at
+// Bind the client's own save-loaded native for the trash expression `payload`, a pile or a clump
+// at rest (the index holds both forms, and a row binds a native of its own form only): match it at
 // `matchPos` (bit-exact within 1 cm, same chipType, ambiguous cluster skipped so the wrong one is
 // never bound), consume it from the index, claim it for the membership sweep, retire its
 // client-local identity, converge its transform when it genuinely diverged, and register it as

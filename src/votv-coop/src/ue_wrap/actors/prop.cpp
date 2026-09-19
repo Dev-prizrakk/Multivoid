@@ -198,6 +198,10 @@ bool IsGarbageClump(void* obj) {
     return WalksToBase(R::ClassOf(obj), GarbageClumpCls());
 }
 
+bool IsTrashActor(void* obj) {
+    return IsChipPile(obj) || IsGarbageClump(obj);
+}
+
 bool IsTrashBitsPile(void* obj) {
     if (!obj) return false;
     ResolveExtraBases();

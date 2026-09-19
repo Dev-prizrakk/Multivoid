@@ -13,6 +13,7 @@
 #include "coop/creatures/kerfur_prop_adoption.h"  // a kerfur prop's fuzzy miss defers to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // the post-quiescence retry of the kerfur off-to-active retire
 #include "coop/element/mirror_defer.h"  // hide a fresh host mirror until the reveal
+#include "coop/element/quiescence_drain.h"  // ArmHostVacateTwin: a row whose twin at the key has the other form
 #include "coop/net/protocol.h"
 #include "coop/creatures/npc_sync.h"  // IsAllowlistedClass, the NPC half of the quiescence probe
 #include "coop/player/hand_item.h"    // CollectHandAxisActors: the hand axis is not adoptable
@@ -175,7 +176,17 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // a pile the host moved during the join window is expressed at the new spot while the
         // native loaded at the old, and matching on the live position went blind to it. With no
         // stamp (a mid-game spawn) the live position is the fallback.
-        if (!isClump && coop::join_membership_sweep::IsClaimTrackingActive()) {
+        // The key's form is the form the save held. When it is not the row's form, the entity has
+        // changed form since the capture (a pile grabbed in the window is a clump now; a clump that
+        // landed is a pile): this client's own copy at the key is the STALE twin of an entity
+        // expressed right here, so the row materialises below and the copy is retired on the host's
+        // word, by position alone, once the row is bound.
+        const bool twinIsClump = payload.hasMatchPos == coop::net::match_form::kClump;
+        const bool formMoved   = payload.hasMatchPos != coop::net::match_form::kNone && twinIsClump != isClump;
+        if (formMoved && coop::join_membership_sweep::IsClaimTrackingActive()) {
+            coop::element::quiescence_drain::ArmHostVacateTwin(
+                payload.elementId, ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ});
+        } else if (coop::join_membership_sweep::IsClaimTrackingActive()) {
             const ue_wrap::FVector matchPos =
                 payload.hasMatchPos ? ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}
                                     : loc;

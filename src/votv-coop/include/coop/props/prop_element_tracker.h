@@ -147,6 +147,12 @@ void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out);
 void CollectTrackedPileTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 
+// The same capture for every live garbage clump: a clump at rest is in the scratch save as a clump
+// (it is an int_primitive, written whatever holds it), so the joiner loads its own copy at this
+// position. Kept apart from the piles': what reads the pile map means a PILE at that key.
+void CollectTrackedClumpTransforms(
+    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
+
 // The save-time position of every live off-form kerfur by host eid, at the same instant and with
 // the same inline self-seed of an unseeded eid; the host carries it on a window turn-on's
 // KerfurConvert so the joining client retires its stale local off-prop at the exact key. One

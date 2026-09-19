@@ -32,7 +32,7 @@ int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes) {
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsChipPile(o)) continue;
+        if (!ue_wrap::prop::IsTrashActor(o)) continue;   // both resting forms are in the sweep's universe
         ++byClass[R::ClassNameOf(o)];
     }
 

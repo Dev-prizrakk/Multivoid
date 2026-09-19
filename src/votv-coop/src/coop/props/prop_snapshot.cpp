@@ -19,7 +19,8 @@
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
-#include "coop/save/save_transfer.h"  // TryGetSaveTimePileXform, the join snapshot's pile match key
+#include "coop/save/save_transfer.h"  // TryGetSaveTimePileXform / ClumpXform, the join snapshot's match key
+#include "coop/props/trash_channel.h"  // ExpressClumpGeneration, behind a clump's row
 #include "coop/props/snapshot_census.h"  // the per-class completeness census on SnapshotComplete
 #include "coop/dev/eid_lifetime_trace.h"  // read-only: capture-eid vs wire-eid
 #include "coop/dev/force_overdestroy_test.h"  // dev only: inject the over-destroy to prove the floor
@@ -228,10 +229,10 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     }
     const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(obj);
     if (keyStr.empty() || keyStr == L"None") {
-        // A keyless chipPile is expressible: its cross-peer identity is the eid, and the receiver's
-        // eid-only lane spawns it. Anything else keyless has no stable identity, matching the
-        // client sweep's universe test.
-        if (!ue_wrap::prop::IsChipPile(obj) ||
+        // A keyless trash actor is expressible, in either resting form: its cross-peer identity is
+        // the eid, and the receiver's eid-only lane binds or spawns it. Anything else keyless has
+        // no stable identity, matching the client sweep's universe test.
+        if (!ue_wrap::prop::IsTrashActor(obj) ||
             eid == coop::element::kInvalidId || eid == 0) {
             return false;
         }
@@ -281,12 +282,16 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // host's blob map, so the client's twin destroy matches the native loaded at the old spot even
     // if the host moved the pile in the join-load window. The incremental express passes -1 (no
     // twin on the client); no map entry, no stamp, and the receiver falls back to the live pose.
-    p.hasMatchPos = 0;
-    if (matchSlot >= 1 && p.elementId != 0 && ue_wrap::prop::IsChipPile(obj)) {
+    // The form in the key is the form at the CAPTURE, which the entity may have left since.
+    p.hasMatchPos = coop::net::match_form::kNone;
+    if (matchSlot >= 1 && p.elementId != 0 && ue_wrap::prop::IsTrashActor(obj)) {
         ue_wrap::FVector sv;
         if (coop::save_transfer::TryGetSaveTimePileXform(matchSlot, p.elementId, sv)) {
             p.matchX = sv.X; p.matchY = sv.Y; p.matchZ = sv.Z;
-            p.hasMatchPos = 1;
+            p.hasMatchPos = coop::net::match_form::kPile;
+        } else if (coop::save_transfer::TryGetSaveTimeClumpXform(matchSlot, p.elementId, sv)) {
+            p.matchX = sv.X; p.matchY = sv.Y; p.matchZ = sv.Z;
+            p.hasMatchPos = coop::net::match_form::kClump;
         }
     }
     return true;
@@ -430,6 +435,10 @@ void DrainChunk() {
         s->SendReliableToSlot(g_currentTargetSlot,
                               coop::net::ReliableKind::PropSpawn,
                               &p, sizeof(p));
+        // A clump's row says what the actor is; its carry generation rides behind it, on the same
+        // lane, or the joiner holds every pose of it for good.
+        if (ue_wrap::prop::IsGarbageClump(obj))
+            coop::trash_channel::ExpressClumpGeneration(*s, eid, obj, g_currentTargetSlot);
         // The prop's own save record to the same slot, behind its spawn row: a prop whose state
         // changed after the transferred save was written is not in that save.
         coop::prop_save_data::PublishWithSpawn(s, obj, p.key, g_currentTargetSlot);
@@ -456,6 +465,8 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
     // to stamp a match key for.
     if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible
     s->SendPropSpawn(p);
+    if (ue_wrap::prop::IsGarbageClump(actor))
+        coop::trash_channel::ExpressClumpGeneration(*s, eid, actor, /*slot=*/-1);  // every ready peer
     coop::prop_save_data::PublishWithSpawn(s, actor, p.key);
     UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted %sprop %p (eid=%u, key='%.*s') "
             "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",

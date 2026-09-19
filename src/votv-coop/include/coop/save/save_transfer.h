@@ -68,6 +68,10 @@ void CancelForSlot(int peerSlot);
 // window. Game thread.
 bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
 
+// The same for an entity that was a garbage CLUMP in the save this joiner loaded: its own copy is
+// a clump at this position. Host, game thread.
+bool TryGetSaveTimeClumpXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
+
 // Record the pre-grab position of pile `eid` into every active join slot's blob pile map.
 // Called on the host at the seam where a grabbed pile's clump is born, before the pile dies
 // in place, so the position is still its save or native one. A no-op outside a join; lets the

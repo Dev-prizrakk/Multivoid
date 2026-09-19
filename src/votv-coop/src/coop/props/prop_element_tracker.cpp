@@ -345,22 +345,23 @@ void RebindLocalElementActor(coop::element::ElementId eid, void* newActor) {
             eid, oldActor, newActor);
 }
 
-void CollectTrackedPileTransforms(
-    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
-    // The host's save-time pile positions, keyed by host eid: read right after the scratch save was
-    // serialised (save_transfer::OnRequest, the same game-thread tick), so the value equals what
-    // the joining client loads its native at. Keyless chipPiles only (a keyed Aprop_C is covered by
-    // the key diff). A live pile with no eid is not yet re-minted, not absent: the world-change
-    // re-seed can still be deferred at the connect instant, and VOTV's one persistent UWorld keeps
-    // the world stamp live, so the seeded-for-world test is no signal; the eid is minted here
-    // (register only, idempotent), identical to the one the deferred re-seed later broadcasts. One
-    // walk, game thread.
+// The save-time position of every live tracked trash actor of one form, by host eid: read right
+// after the scratch save was serialised (save_transfer::OnRequest, the same game-thread tick), so
+// the value equals what the joining client loads its native at. Keyless only (a keyed Aprop_C is
+// covered by the key diff). A live one with no eid is not yet re-minted, not absent: the
+// world-change re-seed can still be deferred at the connect instant, and VOTV's one persistent
+// UWorld keeps the world stamp live, so the seeded-for-world test is no signal; the eid is minted
+// here (register only, idempotent), identical to the one the deferred re-seed later broadcasts.
+// One walk, game thread.
+static void CollectTrackedTrashTransforms_(
+    bool clumps, std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
     const int32_t n = R::NumObjects();
     int minted = 0;
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        if (!ue_wrap::prop::IsChipPile(obj)) continue;                 // lineage test, pure pointer walks
+        // The lineage test, pure pointer walks.
+        if (!(clumps ? ue_wrap::prop::IsGarbageClump(obj) : ue_wrap::prop::IsChipPile(obj))) continue;
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
         coop::element::ElementId eid = GetPropElementIdForActor(obj);
@@ -369,16 +370,26 @@ void CollectTrackedPileTransforms(
                             EnrollSource::kPassiveCensus);             // mint now (register-only, idempotent; keyless -> census branch inert)
             eid = GetPropElementIdForActor(obj);                      // resolves in-call (minted before return)
             if (eid == coop::element::kInvalidId || eid == 0u)
-                continue;  // mint declined (registry full) -> live-pose fallback for this pile
+                continue;  // mint declined (registry full) -> live-pose fallback for this one
             ++minted;
         }
         out[eid] = ue_wrap::engine::GetActorLocation(obj);
         coop::dev::eid_lifetime_trace::RecordCaptureEid(obj, static_cast<uint32_t>(eid));  // the capture trace
     }
     if (minted > 0)
-        UE_LOGI("prop_element_tracker: CollectTrackedPileTransforms self-seeded %d unseeded live "
-                "chipPile(s) (world-change re-seed still deferred at capture) -> %zu pile save-time xform(s)",
-                minted, out.size());
+        UE_LOGI("prop_element_tracker: the capture self-seeded %d unseeded live %s (world-change re-seed "
+                "still deferred at capture) -> %zu save-time xform(s)",
+                minted, clumps ? "garbage clump(s)" : "chipPile(s)", out.size());
+}
+
+void CollectTrackedPileTransforms(
+    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
+    CollectTrackedTrashTransforms_(/*clumps=*/false, out);
+}
+
+void CollectTrackedClumpTransforms(
+    std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
+    CollectTrackedTrashTransforms_(/*clumps=*/true, out);
 }
 
 void CollectTrackedKerfurTransforms(

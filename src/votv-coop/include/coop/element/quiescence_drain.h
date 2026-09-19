@@ -39,7 +39,8 @@ void OnTick();
 // stamped the pre-grab position), or the pile spawn bind's twin missed at world-ready. Arm a
 // pending save-time twin so the sweep retires the stale native at the old position at
 // quiescence. Idempotent per eid; the latest wins.
-void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType);
+void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType,
+                            bool wantClump = false);
 
 // Armed from a host position correction: the host authoritatively moved E off `oldPos`, so
 // that save position is vacated, and the sweep retires whatever save-loaded native lingers

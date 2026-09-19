@@ -44,6 +44,7 @@ struct PendingTwin {
     uint8_t chipType;
     int     unresolvedPasses = 0;  // held or unmatched passes; dropped at kMaxTwinPasses
     bool    hostVacate = false;    // armed from a host PropSnapPos: retired on the host's word
+    bool    wantClump  = false;    // the form of the native this key names (a host-vacate twin takes either)
 };
 std::unordered_map<uint32_t, PendingTwin> g_pendingSaveTimeTwin;
 // A host-vacate twin matches the stale native by position alone: whatever chipPile lingers at
@@ -130,7 +131,7 @@ int SweepReconcileSaveTimeTwins() {
     // A fresh walk of the live unbound native chipPiles, the candidate stale twins: the world-ready
     // index predates these async loads, and stored internal indices go stale across a purge. A
     // bound native is the mirror, never a twin.
-    struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; };
+    struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; bool isClump; };
     std::vector<LiveNative> natives;
     // The probe's parallel census of bound chipPile natives and their eids: a native at the old
     // position bound to another eid is the wrong-eid residual, excluded from the candidates, and
@@ -142,7 +143,8 @@ int SweepReconcileSaveTimeTwins() {
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsChipPile(o)) continue;                   // chip piles only
+        const bool isClump = ue_wrap::prop::IsGarbageClump(o);
+        if (!isClump && !ue_wrap::prop::IsChipPile(o)) continue;        // a trash entity's two resting forms
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
         if (coop::prop_element_tracker::IsBoundMirrorNative(o)) {
             if (probe) {
@@ -155,7 +157,7 @@ int SweepReconcileSaveTimeTwins() {
             continue;  // bound native is the mirror, not a twin
         }
         const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
-        natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o)});
+        natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o), isClump});
     }
 
     // The per-eid decision. Matched and confirmed: retire, no cap (positive evidence: the element
@@ -172,7 +174,12 @@ int SweepReconcileSaveTimeTwins() {
         const ue_wrap::FVector key{p.x, p.y, p.z};
         const int idx = coop::save_time_retire_util::FindExactMatch(
             natives, consumedFlags, key,
-            [&p](const LiveNative& nv) { return p.chipType == kAnyChipType || nv.chipType == p.chipType; });
+            [&p](const LiveNative& nv) {
+                // A host-vacate twin is whatever stale copy sits at the vacated key, of either form;
+                // any other key names a native of one form.
+                if (!p.hostVacate && nv.isClump != p.wantClump) return false;
+                return p.chipType == kAnyChipType || nv.chipType == p.chipType;
+            });
         // The element's current binding, checked with IsLiveByIndex, never raw IsLive: an
         // element-held pointer may be freed memory after a purge, and IsLive on freed memory
         // misreads.
@@ -297,7 +304,8 @@ void ApplyPendingDestroys() {
 
 // The arm entry points: event handlers capture here and never apply.
 
-void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType) {
+void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType,
+                            bool wantClump) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
     // The host's word supersedes the inference in both arm orders: ArmHostVacateTwin overwrites an
     // event twin, and an event arm landing after the PropSnapPos must not downgrade the vacate twin
@@ -308,7 +316,9 @@ void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector
     // Record the save-time key for the post-quiescence sweep; no bracket index is needed, since the
     // sweep walks the GUObjectArray fresh and matches the key through the shared kernel. Idempotent
     // per eid; the latest grab, land or spawn miss wins.
-    g_pendingSaveTimeTwin[static_cast<uint32_t>(eid)] = PendingTwin{savePos.X, savePos.Y, savePos.Z, chipType};
+    PendingTwin twin{savePos.X, savePos.Y, savePos.Z, chipType};
+    twin.wantClump = wantClump;
+    g_pendingSaveTimeTwin[static_cast<uint32_t>(eid)] = twin;
     UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u "
             "(in-window grabbed/moved or world-ready-miss pile -> sweep retires the stale native@old at quiescence)",
             static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType));

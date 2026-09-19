@@ -45,6 +45,12 @@ bool IsChipPile(void* obj);
 // ball a chipPile morphs into on grab. A pointer-chain test, no strings. False for null.
 bool IsGarbageClump(void* obj);
 
+// A chip pile or a garbage clump: the two forms one trash entity rests in. A pile is the common
+// one; a clump at rest is a pile that could not turn back (its re-pile refuses a hit on a simulating
+// body, a slope, a holder whose hand is busy), and the game saves and loads it as a clump. False
+// for null.
+bool IsTrashActor(void* obj);
+
 // The same two tests taken on a CLASS NAME rather than an instance, for a wire payload that
 // names its class before any actor exists: true for the chip-pile and garbage-clump families, a
 // descendant test against the two bases rather than a string match, memoised per name so a spawn

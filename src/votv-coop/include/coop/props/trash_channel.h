@@ -123,6 +123,14 @@ void ClearClientCarry(uint32_t eid);
 // no-op if E is not carrying.
 void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newClump);
 
+// Host: tell `slot` (every ready peer when negative) which carry generation clump E is in, behind
+// the row that expressed it: a to-clump convert at E's CURRENT generation, no bump. A clump that
+// never transitioned (one the save loaded, one a creature made) is given generation 1 here, in
+// the same breath as the peers are told: generation 0 means "no clump of E on any peer" to the
+// pose gate and to a push's reopen, and a generation nobody was told of holds every pose for
+// good. A receiver whose mirror of E is already a clump takes it as the generation alone.
+void ExpressClumpGeneration(coop::net::Session& s, coop::element::ElementId E, void* clump, int slot);
+
 // Host: the live actor E names right now (a pile or a clump), or null. For a caller holding a
 // cached actor of E's that died, to tell a dead ENTITY from an entity that moved on to a successor.
 void* LiveActorOf(coop::element::ElementId E);
