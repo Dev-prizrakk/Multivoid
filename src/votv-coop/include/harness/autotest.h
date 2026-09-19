@@ -51,6 +51,11 @@ DWORD WINAPI PuppetGrabProbeThread(LPVOID arg);
 void RunGrabIntentTest();
 DWORD WINAPI GrabIntentTestThread(LPVOID arg);
 
+// The host-throw scenario (VOTVCOOP_RUN_HOSTTHROW=1): the host walks to a pile with the bot
+// director, grabs and throws it; the client samples its own mirror of the clump.
+void RunHostThrowScenario();
+DWORD WINAPI HostThrowThread(LPVOID arg);
+
 // The trash morph gate, red and green in one run: each peer calls the guarded verb, toClump, on
 // the nearest chip pile. The host's pile morphs, proving the verb does what is being refused; the
 // client's survives with its element id. Env VOTVCOOP_RUN_TRASH_PARK=1, both peers.
