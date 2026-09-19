@@ -94,7 +94,7 @@ public:
     // True while the hurt-flash window is active (a test seam).
     bool IsHurtFlashing() const { return hurtFlashActive_; }
 
-    // True while a ragdoll display body is spawned (a test seam).
+    // True while a ragdoll display body is spawned: the peer is ragdolled (fainted, fell, died).
     bool IsRagdollDisplayed() const { return ragdoll_.Active(); }
     // The spawned playerRagdoll_C body and its GUObjectArray index, for a liveness-guarded deref in
     // tests.

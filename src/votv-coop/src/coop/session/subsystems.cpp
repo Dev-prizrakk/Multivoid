@@ -373,7 +373,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // Per-slot cleanup: only subsystems with per-slot state are called here; the global-state ones
     // are handled by DisconnectAll.
     coop::trash_mirror::OnDisconnectForSlot(slot);  // phase 1: retire the leaver's trash mirrors BEFORE the generic mirror drain (else the rooted actor leaks)
-    coop::trash_channel::OnGrabHolderLeft(static_cast<uint8_t>(slot));  // the leaver's carried clump is let go: it falls, streams, lands
+    coop::trash_channel::OnGrabHolderLeft(session, static_cast<uint8_t>(slot));  // the leaver's carried clump is let go: it falls, streams, lands
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);

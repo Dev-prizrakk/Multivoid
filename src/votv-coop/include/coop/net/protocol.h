@@ -2206,8 +2206,8 @@ enum class GrabRefusedReason : uint8_t {
     NotAPile     = 6,   // the eid names a live actor that is not a chip pile
     NoVerb       = 7,   // the game's grab verb did not resolve
     NoClump      = 8,   // the grab verb ran and left no clump in the puppet's hand
-    TakenOver    = 9,   // not an answer to a request (reqId 0): the host's hand or a broom took the
-                        // clump out of the sender's carry, and its carry is over
+    HoldEnded    = 9,   // not an answer to a request (reqId 0): the host ended the sender's carry --
+                        // its hand or a broom took the clump, or the sender's puppet fell
 };
 struct GrabRefusedPayload {
     uint32_t eid;        // 4 -- the eid the refused GrabIntent named

@@ -9,6 +9,7 @@
 #include "coop/dev/director/director.h"   // PickReachablePile, AddWalkToProcesses
 #include "coop/player/players_registry.h"
 #include "coop/props/remote_prop.h"
+#include "coop/props/trash_channel.h"        // ClientCarryEid (the fall leg reads the carry toggle)
 #include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent, DebugSendThrowIntent, DebugSendHardThrowIntent
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
@@ -17,6 +18,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"   // SetMainPlayerRagdollMode, ForceMainPlayerGetUp (the fall leg)
 
 #include <atomic>
 #include <cmath>
@@ -253,6 +255,31 @@ void RunGrabIntentTest() {
             });
             ::Sleep(50);
         }
+    }
+    // 7. The fall (VOTVCOOP_GRAB_INTENT_FALL=1): the game drops what a fainting player holds, and
+    // this player's clump is in its puppet's hand on the host. Re-grab the landed pile, carry, fall
+    // with the game's own ragdoll verb: the host must let the clump go and say the carry is over.
+    size_t fallLen = 0; char fallBuf[8] = {};
+    const bool fall = ::getenv_s(&fallLen, fallBuf, sizeof(fallBuf), "VOTVCOOP_GRAB_INTENT_FALL") == 0 &&
+                      fallLen > 1 && fallBuf[0] == '1';
+    if (fall) {
+        ::Sleep(4000);   // the last landing converts back to a pile
+        UE_LOGI("grab_intent_test: >>> FALL leg -- re-grab eid=%u, carry 2 s, ragdoll <<<", pk->eid);
+        RunGT([pk](std::atomic<int>& d) { coop::trash_collect_sync::DebugSendGrabIntent(pk->eid); d.store(1); });
+        ::Sleep(2000);
+        RunGT([pk](std::atomic<int>& d) {
+            const bool ok = E::SetMainPlayerRagdollMode(pk->player, /*ragdoll=*/true, /*passOut=*/false, /*death=*/false);
+            UE_LOGI("grab_intent_test: >>> FELL while carrying eid=%u (ragdollMode ok=%d) <<<", pk->eid, ok ? 1 : 0);
+            d.store(1);
+        });
+        ::Sleep(4000);
+        RunGT([pk](std::atomic<int>& d) {
+            const bool ok = E::ForceMainPlayerGetUp(pk->player);
+            UE_LOGI("grab_intent_test: >>> GOT UP (ok=%d); carrying now=%u (0 = the host ended the carry) <<<",
+                    ok ? 1 : 0, static_cast<unsigned>(coop::trash_channel::ClientCarryEid() == coop::element::kInvalidId
+                                                          ? 0u : coop::trash_channel::ClientCarryEid()));
+            d.store(1);
+        });
     }
     ::Sleep(4000);
     UE_LOGI("grab_intent_test: CLIENT done eid=%u -- the verdict is the round trip's own markers in both logs: "

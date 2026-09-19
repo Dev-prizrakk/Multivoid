@@ -91,13 +91,15 @@ void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId);
 coop::element::ElementId ClientCarryEid();
 
 // Host: `senderSlot` disconnected. Every clump it holds is let go where it is (OnHolderGone).
-void OnGrabHolderLeft(uint8_t senderSlot);
+void OnGrabHolderLeft(coop::net::Session& s, uint8_t senderSlot);
 
-// Host: E's holder can hold it no longer -- it left, or its puppet is gone -- and the clump lives
-// on. The hold ends as a still release does: the clump falls, its flight streams, and the land or
-// the rest closes the lane. Never a destroy: the entity is still in the world. A no-op when no
-// client holds E.
-void OnHolderGone(coop::element::ElementId E);
+// Host: E's holder can hold it no longer -- it left, its puppet is gone, or it fell (the game
+// drops what a fainting player holds, and a client's clump is in its puppet's hand, where the
+// client's own drop cannot reach) -- and the clump lives on. The hold ends as a still release
+// does: the clump falls, its flight streams, the land or the rest closes the lane, and a holder
+// still connected is told its carry is over. Never a destroy: the entity is still in the world. A
+// no-op when no client holds E.
+void OnHolderGone(coop::net::Session& s, coop::element::ElementId E);
 
 // Host: E's puppet-held clump was lost with no land. Clear the hold and latch and broadcast a
 // destroy, so no client is stuck carrying a dead eid. The entity really did vanish here, so a

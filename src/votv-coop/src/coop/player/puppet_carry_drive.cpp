@@ -150,12 +150,14 @@ void Tick(coop::net::Session& s) {
             it = g_held.erase(it);
             continue;
         }
-        // Guard 3 (hand-drive only): the puppet still live? With no puppet there is no hand, and the
-        // clump is a live body in the world: it is let go, never retired, and streams on below like
-        // any release.
+        // Guard 3 (hand-drive only): can the puppet still hold? With no puppet there is no hand, and
+        // a peer that fell holds nothing: the game drops what a fainting player has (mainPlayer:
+        // dropGrabObject on the faint), but this clump is in the PUPPET's hand, where the remote
+        // player's own drop cannot reach. The clump is a live body in the world: it is let go,
+        // never retired, and streams on below like any release.
         coop::RemotePlayer* rp = it->flying ? nullptr : coop::players::Registry::Get().Puppet(it->slot);
-        if (!it->flying && (!rp || !rp->valid())) {
-            coop::trash_channel::OnHolderGone(E);
+        if (!it->flying && (!rp || !rp->valid() || rp->IsRagdollDisplayed())) {
+            coop::trash_channel::OnHolderGone(s, E);
             it->flying = true;
         }
         const ue_wrap::FVector loc = E::GetActorLocation(it->clump);

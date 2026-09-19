@@ -63,18 +63,23 @@ void ClearHeldBy(uint32_t eid) {
     g_heldBy.erase(eid);
 }
 
+// The holder is told, alone, that the host ended its carry: nothing else on the wire says so (a
+// takeover sends no convert, a let-go clump may never land), and a client that still believes it
+// carries spends its next use press on a throw of a clump it no longer holds. A slot that has
+// left is not sent to: the send refuses a slot that is not world-ready.
+static void TellHoldEnded(coop::net::Session& s, uint8_t slot, uint32_t eid) {
+    coop::net::GrabRefusedPayload p{};
+    p.eid    = eid;
+    p.reason = static_cast<uint8_t>(coop::net::GrabRefusedReason::HoldEnded);
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::GrabRefused, &p, sizeof(p));
+}
+
 void EndHoldTakenOver(coop::net::Session& s, uint32_t eid) {
     auto it = g_heldBy.find(eid);
     if (it == g_heldBy.end()) return;
     const uint8_t slot = it->second;
     g_heldBy.erase(it);
-    // The holder is told, alone: nothing else on the wire says its carry is over (the takeover
-    // sends no convert), and a client that still believes it carries spends its next use press on
-    // a throw of a clump it no longer holds.
-    coop::net::GrabRefusedPayload p{};
-    p.eid    = eid;
-    p.reason = static_cast<uint8_t>(coop::net::GrabRefusedReason::TakenOver);
-    s.SendReliableToSlot(slot, coop::net::ReliableKind::GrabRefused, &p, sizeof(p));
+    TellHoldEnded(s, slot, eid);
     UE_LOGI("[GRAB-INTENT] eid=%u TAKEN OVER from slot=%u -- hold ended, the holder told", eid, slot);
 }
 
@@ -147,11 +152,12 @@ void ClearClientCarry(uint32_t eid) {
 }
 
 void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId) {
-    if (reason == static_cast<uint8_t>(coop::net::GrabRefusedReason::TakenOver)) {
-        // Not an answer to a request: the host's hand or a broom took the clump out of ours.
+    if (reason == static_cast<uint8_t>(coop::net::GrabRefusedReason::HoldEnded)) {
+        // Not an answer to a request: the host ended our carry (its hand or a broom took the
+        // clump, or we fell and our puppet let it go).
         const bool carried = (eid != 0u && eid == g_clientCarry);
         if (carried) g_clientCarry = 0;
-        UE_LOGI("[GRAB-INTENT] CLIENT carry TAKEN OVER eid=%u -- %s", eid,
+        UE_LOGI("[GRAB-INTENT] CLIENT carry ENDED BY THE HOST eid=%u -- %s", eid,
                 carried ? "carry ended, the next press grabs" : "not what we carry -- ignored");
         return;
     }
@@ -379,17 +385,18 @@ static void LetGo(uint32_t eid, void* puppet, void* clump) {
     coop::puppet_carry_drive::NoteLetGo(static_cast<coop::element::ElementId>(eid));
 }
 
-void OnHolderGone(coop::element::ElementId E) {
+void OnHolderGone(coop::net::Session& s, coop::element::ElementId E) {
     const uint32_t eid = static_cast<uint32_t>(E);
     auto held = g_heldBy.find(eid);
     if (held == g_heldBy.end()) return;
+    TellHoldEnded(s, held->second, eid);
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(held->second);
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     coop::element::Element* ce = coop::element::Registry::Get().Get(E);
     void* ca = ce ? ce->GetActor() : nullptr;
     if (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx())) {
-        UE_LOGI("[GRAB-INTENT] eid=%u slot=%u -- the holder is gone, the clump is let go where it is "
-                "(it falls and lands like a release)", eid, held->second);
+        UE_LOGI("[GRAB-INTENT] eid=%u slot=%u -- the holder cannot hold (left, fell, no puppet): the clump "
+                "is let go where it is (it falls and lands like a release)", eid, held->second);
         LetGo(eid, puppet, ca);
     } else {
         // No clump to let go of. The lane stays: a settle in flight commits the land, and a clump
@@ -419,7 +426,7 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
         return;
     }
     if (!puppet) {
-        OnHolderGone(static_cast<coop::element::ElementId>(eid));   // a live clump is let go, never retired
+        OnHolderGone(s, static_cast<coop::element::ElementId>(eid));   // a live clump is let go, never retired
         return;
     }
 
@@ -451,12 +458,12 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
             mode == coop::net::throw_mode::kHardThrow ? "hardThrow(LMB)" : "release(E)", clump, lin.X, lin.Y, lin.Z);
 }
 
-void OnGrabHolderLeft(uint8_t senderSlot) {
+void OnGrabHolderLeft(coop::net::Session& s, uint8_t senderSlot) {
     // Collected first: letting go edits the registry this walks.
     std::vector<uint32_t> eids;
     for (const auto& kv : g_heldBy)
         if (kv.second == senderSlot) eids.push_back(kv.first);
-    for (uint32_t eid : eids) OnHolderGone(static_cast<coop::element::ElementId>(eid));
+    for (uint32_t eid : eids) OnHolderGone(s, static_cast<coop::element::ElementId>(eid));
 }
 
 void ReleaseClientHold(coop::net::Session& s, coop::element::ElementId E) {
