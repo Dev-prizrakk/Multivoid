@@ -113,6 +113,9 @@ private:
 
 // The connection cap at the host's edge, one instance for the two sites that feed it: the accept
 // edge by address, and the proof by the identity just proved where the transport had no address.
+// That a host's edge bounds what one source may open before any expensive work is on the list of
+// edge protections Relay, Moddy's VOTV mod, publishes in its README; the shape here is MTA's
+// (docs/credits.md).
 History& Connects();
 // The host's session start: the two ini rows applied to Connects(), which also empties it. A cap
 // of 0 disables it. The refusal lasts one window.

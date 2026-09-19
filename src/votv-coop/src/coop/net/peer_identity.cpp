@@ -151,6 +151,8 @@ bool EnsureParentDirs(const std::wstring& path) {
 // another account on the PC cannot read the key even from a folder that would let it. Built once
 // per process from the process token; not ok when the OS refused, and the file then keeps its
 // folder's inherited list, which the log says.
+// A key file under a restrictive access list is on the list of edge protections Relay, Moddy's
+// VOTV mod, publishes in its README (docs/credits.md).
 struct PrivateAcl {
     std::vector<uint8_t> userSid;
     uint8_t              systemSid[SECURITY_MAX_SID_SIZE]{};

@@ -1,4 +1,5 @@
 // coop/net/end_reason.cpp -- see coop/net/end_reason.h.
+// The precedent for publishing a reason and a code at all (Relay's README) is named in the header.
 
 #include "coop/net/end_reason.h"
 

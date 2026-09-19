@@ -7,6 +7,9 @@
 // The sentence is the player's; the site's own text rides beside it as the detail. MTA: one
 // reason enum on the wire and one literal code per case in CPacketHandler's
 // Packet_ServerDisconnected, with CConnectManager mapping the transport's own errors the same way.
+// Relay, Moddy's VOTV mod, publishes the two rules this follows in its README: show the reason a
+// join is being held rather than one generic label, and give a player stable codes to quote
+// (docs/credits.md).
 
 #pragma once
 

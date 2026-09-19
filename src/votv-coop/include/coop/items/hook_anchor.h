@@ -49,6 +49,7 @@ enum class CommitResult { Failed, Sent, AdoptedLocally };
 // OWNER: this hook has both ends anchored and the game has let go of it. Capture its record and
 // either send the commit or, on the host, adopt it here. `Failed` means the caller keeps streaming
 // and tries again on the next poll.
+// The record-as-payload precedent is named in ue_wrap/actors/save_record.h, on CaptureRecord.
 CommitResult SendCommit(uint16_t seq, ue_wrap::hook::Kind kind, void* hookActor);
 
 // HOST: a commit arrived.

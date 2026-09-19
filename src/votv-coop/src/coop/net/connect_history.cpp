@@ -1,4 +1,5 @@
 // coop/net/connect_history.cpp -- see coop/net/connect_history.h.
+// The edge-protection precedent (Relay's README) is named in the header, on Connects().
 
 #include "coop/net/connect_history.h"
 

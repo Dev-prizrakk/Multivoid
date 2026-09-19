@@ -44,6 +44,7 @@ bool Covers(void* actor);
 // is not covered, no peer could receive it, the capture fails, or the send did not take every chunk.
 // A caller may ignore it: a refused send is registered and re-sent from the live actor on a widening
 // backoff, and only a give-up past that ceiling is logged as a divergence.
+// The record-as-payload precedent is named in ue_wrap/actors/save_record.h, on CaptureRecord.
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key);
 
 // The same record to ONE peer (the join seed). Host side.
