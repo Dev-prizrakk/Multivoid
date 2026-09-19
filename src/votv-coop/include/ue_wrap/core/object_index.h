@@ -10,6 +10,8 @@
 // them before touching the object. An unreachable object is never seeded and never handed out as
 // a class's instance: only unreachable objects are freed, by a purge thread that runs beside the
 // game thread, so a pointer to one is unsafe from the moment the bit is set.
+// The notifications are the engine's own; uobject_listeners.h names where UE4SS registers on the
+// same lists.
 
 #pragma once
 

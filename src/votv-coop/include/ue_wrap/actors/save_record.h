@@ -127,6 +127,8 @@ bool OverridesGetData(void* cls);
 
 // Capture `actor`'s save record as the actor itself serializes it. False when `getData` does not
 // resolve or the call fails.
+// An actor's own record as the payload that carries it to another peer is the pair Relay, Moddy's
+// VOTV mod, publishes as a rule's spawn payload on its README Blueprint page (docs/credits.md).
 bool CaptureRecord(void* actor, SaveRecord& out);
 
 // Hand a record back to `actor` through its own `loadData` -- the LEAF half of it only.

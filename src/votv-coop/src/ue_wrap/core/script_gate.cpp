@@ -1,4 +1,5 @@
 // ue_wrap/core/script_gate.cpp -- see ue_wrap/core/script_gate.h.
+// The watch surface's precedent (Relay's README) is named in the header.
 //
 // The loop is derived, not pattern-scanned: the exec-handler table (GNatives) is resolved by
 // its dispatch-site signature and validated, the local-final and local-virtual handlers are read

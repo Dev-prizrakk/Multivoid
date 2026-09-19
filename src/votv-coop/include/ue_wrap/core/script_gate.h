@@ -36,6 +36,10 @@ struct Call {
     bool     fromOurCode;     // inside a reflection::CallFunction of ours
 };
 
+// The watch surface follows the Watch that Relay, Moddy's VOTV mod, publishes in its README: a
+// pre phase that may cancel the call, a post phase that only observes, and the calling Blueprint
+// frame handed to both. Relay's README says cancellation rewrites the function's bytecode; this
+// gate leaves the bytecode alone and refuses the body at the loop. Links: docs/credits.md.
 // Cancel skips the body: the return value and every out parameter keep whatever the caller
 // initialised them to, and the post callbacks do not fire. Run executes it.
 enum class Verdict : uint8_t { Run, Cancel };
@@ -58,10 +62,12 @@ bool Watch(void* ufunction, int tag, PreFn pre, PostFn post);
 bool Unwatch(void* ufunction, int tag, PreFn pre, PostFn post);
 
 // Watch every function called `name`, on any class: a name watch fires for the overriding
-// function of a subclass as it does for the base one, which an exact watch on the base cannot.
-// `name` must have static lifetime. The name resolves on the game thread (the string-to-name
-// conversion dispatches ProcessEvent), so the watch is inert until ResolvePendingNames has run;
-// registration posts one attempt and a game-thread tick drives the rest. Any thread.
+// function of a subclass as it does for the base one, which an exact watch on the base cannot --
+// the limit Relay's README Blueprint states for a watch registered on a parent class
+// (docs/credits.md). `name` must have static lifetime. The name resolves on the game thread (the
+// string-to-name conversion dispatches ProcessEvent), so the watch is inert until
+// ResolvePendingNames has run; registration posts one attempt and a game-thread tick drives the
+// rest. Any thread.
 bool WatchName(const wchar_t* name, int tag, PreFn pre, PostFn post);
 void ResolvePendingNames();
 

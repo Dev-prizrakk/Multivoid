@@ -8,6 +8,9 @@
 // the game thread drains. A callback runs inside the engine with the object half-built (create)
 // or half-destroyed (delete), so it records the pointer, the class and the slot index and nothing
 // else; every read that needs the object waits for the drain.
+// Both lists are the engine's own. UE4SS registers on the same two through its wrapper:
+// reference/RE-UE4SS/UE4SS/src/GUI/LiveView.cpp:809 and
+// reference/RE-UE4SS/UE4SS/src/Mod/LuaMod.cpp:5728. Links: docs/credits.md.
 
 #pragma once
 

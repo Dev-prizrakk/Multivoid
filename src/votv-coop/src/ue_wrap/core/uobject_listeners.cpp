@@ -2,7 +2,8 @@
 // FUObjectArray, and the queue they feed. The list offsets, the lock and the vtable shape are the
 // engine's, taken from RE-UE4SS's 4.27 member layout
 // (reference/RE-UE4SS/assets/MemberVarLayoutTemplates/MemberVariableLayout_4_27_Template.ini)
-// and confirmed against the shipping binary.
+// and confirmed against the shipping binary. UE4SS's own registrations on these lists are cited
+// in the header.
 #include "ue_wrap/core/uobject_listeners.h"
 
 #include "ue_wrap/core/log.h"
