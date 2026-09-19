@@ -50,6 +50,7 @@
 #include "coop/player/run_end_travel.h"
 #include "coop/items/broom_stroke.h"
 #include "coop/props/trash_morph_gate.h"
+#include "coop/items/player_inventory_sync.h"  // TakeJoinPose: where a returning player stood
 #include "coop/session/teleport_client.h"  // the checkpoint join spawn (the client pawn-Set edge)
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/types.h"
@@ -535,16 +536,24 @@ void Tick(coop::net::Session& session) {
     if (g_netLocal.Raw() && !g_netLocal.Alive()) { g_netLocal.Reset(); g_netLocalController.Reset(); }
     if (!g_netLocal.Raw()) {
         g_netLocal.Set(localNow);  // resolved once at the top of this tick
-        // The checkpoint join spawn: every client appearance spawns at the checkpoint start point,
-        // never at the transferred save's playerTransform (the host's own position). This pawn-Set
+        // The join spawn: a client appearance is placed by us, never left at the transferred
+        // save's playerTransform (the host's own position). This pawn-Set
         // edge is exactly "a new local body exists": once per world appearance, while the load
-        // screen still covers the swap; a save-transfer join's two loads both get it, and the final
-        // one is the one that matters.
+        // screen still covers the swap. A returning player appears once at the spot their profile
+        // says they were standing on; every other body of the session, a respawn included, at the
+        // start point.
         if (localNow && isConnected && !isHost) {
-            coop::teleport_client::ApplyLocally(
-                {ue_wrap::profile::name::kKPPSpawnX, ue_wrap::profile::name::kKPPSpawnY,
-                 ue_wrap::profile::name::kKPPSpawnZ, 0.f, 0.f, 0.f});
-            UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
+            float x = 0, y = 0, z = 0, yaw = 0;
+            if (coop::player_inventory_sync::TakeJoinPose(x, y, z, yaw)) {
+                coop::teleport_client::ApplyLocally({x, y, z, 0.f, yaw, 0.f});
+                UE_LOGI("net_pump: CLIENT spawn -> the profile's pose (%.0f, %.0f, %.0f) yaw=%.0f",
+                        x, y, z, yaw);
+            } else {
+                coop::teleport_client::ApplyLocally(
+                    {ue_wrap::profile::name::kKPPSpawnX, ue_wrap::profile::name::kKPPSpawnY,
+                     ue_wrap::profile::name::kKPPSpawnZ, 0.f, 0.f, 0.f});
+                UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
+            }
         }
     }
     // The !g_localDeathHandled gate: once the death is handled every local send stops, or the

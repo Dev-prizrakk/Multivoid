@@ -132,6 +132,10 @@ bool SetSpotLightInnerConeAngle(void* spotLight, float newAngle);
 // AmainPlayer_C::isRagdoll (the AnimBP gate) and ::dead; false, outs untouched, while unresolved.
 bool ReadMainPlayerRagdollState(void* mainPlayer, bool& isRagdoll, bool& dead);
 
+// AmainPlayer_C::sittingOn: the actor the player is seated on -- a chair, and the ATV, which
+// seats its driver through the same sit path -- or null on foot. False while unresolved.
+bool ReadMainPlayerSittingOn(void* mainPlayer, void*& sittingOn);
+
 // Write the same `dead` bool, and read it back: wrote is not holds. The one writer of this field
 // in our layer -- death_revive clears it to end an episode, a drill sets it to author one -- so the
 // masked write and its offset live here, beside the read, instead of once per caller.

@@ -75,10 +75,15 @@ naming its step: connecting, downloading in bytes, loading the world, receiving 
 
 ### 3. Pre-world state
 
-The joiner's own inventory is per player and never crosses the wire as gameplay: the host stores
-it per save under the peer's identity and pushes it right after the Join, before the world
-exists, so the pockets are substituted in the one window before the game materialises the
-world (`coop/items/player_inventory_sync`).
+The joiner's own profile (what they carry, wear and hold, their vitals, and where they stood) is
+per player and never crosses the wire as gameplay: the host stores it per save under the peer's
+identity and pushes it right after the Join, before the world exists, so it is substituted into
+the save object in the one window before the game materialises the world from it
+(`coop/items/player_inventory_sync`). The join boot arms that substitution for the load it is
+about to make, and the placement at the world appearance uses the profile's position once, or
+the start point on a first join. The same position is written to the save object's
+`playerTransform`, which on a client still held the host's: the game's own check for a player
+behind geometry sends them there.
 
 ### 4. World load and quiescence
 
@@ -94,8 +99,9 @@ past either the client announces anyway, logged loudly as degraded.
 The client announces ready once per world, when a gameplay world is up, the prop registry is
 seeded for that world, no purge is running, and the probe has settled (`coop/session/net_pump`).
 This is the join barrier: no authoritative state lands in a world that is still churning. On
-every appearance in a co-op world, the client spawns at the base gate, never at the host's saved
-position that the transferred save carries.
+every appearance in a co-op world the client is placed by the mod, never left at the host's saved
+position that the transferred save carries: at the last spot its profile says it was standing
+on, once, for a returning player, and at the base gate otherwise.
 
 ### 5. Connect replay
 
@@ -301,8 +307,8 @@ and it is the reason the relay's own silence stays.
 | the world at join | the host | its live world, captured and streamed whole |
 | what changed since the capture | the host | explicit deletes, the snapshot bracket, position corrections, per-lane seeds |
 | the ready signal | the client | announced at quiescence; the host never guesses when a world is loaded |
-| the joiner's placement | the client | the base gate on every appearance |
-| the joiner's inventory | the joiner; the host stores it | pushed before the world exists |
+| the joiner's placement | the client | the profile's standing spot once, for a returning player; else the base gate |
+| the joiner's profile (items, vitals, position) | the joiner; the host stores it | pushed before the world exists |
 | the world save | the host only | clients are blocked at the write chokepoint |
 | the reconcile verdict | the client, bounded | the membership sweep with a floor and a valve |
 
@@ -315,7 +321,7 @@ and it is the reason the relay's own silence stays.
 | `Join` | each peer | element id, nickname, skin, preferences, game target |
 | `RosterRow` | host to all | who occupies a slot; zero means empty; re-sent as state |
 | `SaveTransferRequest`, `SaveTransferBegin`, `SaveTransferChunk` | client, then host | the request; total bytes, sidecar bytes, checksum, game mode; the chunks |
-| `PlayerInventoryBlob` | both | the per-player inventory, pre-world |
+| `PlayerInventoryBlob` | both | the per-player profile, pre-world |
 | `ClientWorldReady` | client to host | once per world, at quiescence |
 | `SnapshotBegin`, `PropSpawn`, `PropSnapPos`, `PropDestroy`, `SnapshotComplete` | host to one client | the bracket |
 | `EventSnapshot` | host to one client | one per in-flight event |

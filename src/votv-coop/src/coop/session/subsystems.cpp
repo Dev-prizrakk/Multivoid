@@ -315,7 +315,7 @@ void ConnectReplayForSlot(int slot) {
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
     // joiner loaded its world, so the blob would miss the pre-materialise hook; the host tick's
     // connect-edge detector drives it pre-world instead. No join teleport here either: the
-    // joiner's placement is its own spawn at the start point, and a host teleport at world-ready
+    // joiner places itself at its world appearance, and a host teleport at world-ready
     // overwrote it, since world-ready arrives after the client has placed itself. The teleport
     // helper stays for the admin bring-to-host action. Then catch the new client up to the
     // existing peers' item state.

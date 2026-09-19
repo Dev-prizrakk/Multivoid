@@ -1,5 +1,5 @@
-// coop/items/player_inventory_sync.h -- what each player carries, wears and holds, per player,
-// host-persisted at <game dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
+// coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h:
+// what a player carries, wears and holds, their vitals, where they stood), host-persisted at <game dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
 // key that peer PROVED at admission (coop/net/peer_identity.h), never from a value it sent.
 //
 // A joiner's world is built from a capture of the HOST's save object, and the carried items
@@ -55,6 +55,12 @@ bool HasPendingApply();
 // the hook and cleared on disconnect; the join boot calls it right before each world load. Every
 // other load in the process -- a later Host-with-save above all -- is left alone. Any thread.
 void BeginJoinApply();
+
+// CLIENT: where the applied profile says this player stood, for the join's world appearance.
+// One-shot: a later body in the same session is a respawn, which belongs at the start point.
+// False on a first join, for a player who left dead, and with no profile applied: the caller
+// then uses the start point. Game thread.
+bool TakeJoinPose(float& x, float& y, float& z, float& yaw);
 
 // Per-slot disconnect (host): flush that peer's last inventory blob to disk + drop its
 // in-memory entry. Client: no-op. Game thread.

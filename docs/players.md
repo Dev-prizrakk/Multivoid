@@ -162,7 +162,14 @@ substitution, not an addition: a joiner's world is built from a capture of the h
 object, and that object is where the game keeps what a player carries (`GObjStack[0]`), wears
 and holds, so whatever is not replaced there is the host's. A first join gets the three
 starter items as copies under fresh keys, because the game's key index holds one object per
-key and a copy under its source's key aliases the original the moment either is dropped. That identity is
+key and a copy under its source's key aliases the original the moment either is dropped. The
+same profile carries the player's vitals (health, food, sleep, the flashlight charge, the food
+tolerances and the buffs), which the game keeps in place on that same save object, and where
+the player stood: a first join starts from the game's own defaults at the start point, a
+returning player gets their numbers back and appears at the last spot they were standing on
+(on the ground, not ragdolled, not seated: a position read while driving the ATV is not a place
+a body can be put back), and one who left dead starts a fresh life. The vitals and the position ride a change of the items at once and otherwise go every
+30 seconds. That identity is
 a key file beside the game executable, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is
@@ -211,7 +218,7 @@ setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class and name; the flashlight state |
 | `PlayerDamage` | host to the hit peer | an enemy hit to apply |
 | `SleepState` | each peer to the host; the host to all | in bed or not; the tally; accelerate; end |
-| `PlayerInventoryBlob` | both | the per-player inventory, pre-world |
+| `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
 
 ## Late join

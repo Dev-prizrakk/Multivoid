@@ -473,6 +473,15 @@ bool ReadMainPlayerRagdollState(void* mainPlayer, bool& isRagdoll, bool& dead) {
     return true;
 }
 
+bool ReadMainPlayerSittingOn(void* mainPlayer, void*& sittingOn) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    static int32_t s_off = -2;  // -2 not looked at, -1 looked and failed
+    if (s_off == -2) s_off = R::FindPropertyOffset(R::ClassOf(mainPlayer), L"sittingOn");
+    if (s_off < 0) return false;
+    sittingOn = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + s_off);
+    return true;
+}
+
 bool WriteMainPlayerDead(void* mainPlayer, bool dead) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     // FindBoolProperty, not the plain-byte offset the READ above uses: a UE bool property can be a
