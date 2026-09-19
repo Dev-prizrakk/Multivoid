@@ -397,9 +397,13 @@ function New-PackageManifest {
     # headroom on a string that INTERPOLATES $GameTarget, so a future "0.9.10" (one char
     # longer than "0.9.0n") would fire the throw below during a release, which is the
     # worst possible moment to discover a copy limit.
-    $desc = "Drop-in co-op for Voices of the Void: play the whole game with up to three " +
-            "friends. Shared world, voice chat, join any time. Early phases but already " +
-            "offers a fair bit -- expect bugs. For VotV $GameTarget, modifies no game files."
+    # THE STATUS LEADS (2026-09-19): the gallery and the r2modman list show the START of
+    # this string, and field reports kept being filed against limits a reader never saw,
+    # so "in-progress" and the early-phase line now come before what the mod does.
+    # Measured 239 of 250 with "0.9.0n".
+    $desc = "In-progress multiplayer mod for Voices of the Void: early phases, but already " +
+            "offers a fair bit -- expect bugs. Play the whole game with up to three friends: " +
+            "shared world, voice chat, join any time. For VotV $GameTarget, modifies no game files."
     if ($desc.Length -gt 250) { throw "manifest description is $($desc.Length) chars, max is 250" }
     $obj = [ordered]@{
         name           = 'Multivoid'
