@@ -35,7 +35,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | **Marlore** | code · report | A nine-symptom pass over the trash carry ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)). Four were real defects and are fixed at the root, co-authored: a refused grab that was never answered, a pile that looked different on every peer (865 of 871 measured), a thrower refused every later grab, and a fallen player who kept carrying | 6 commits · unreleased |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; and the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 |
+| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class; and the list of what a returning player's profile covers, which is the list this project's per-player profile now carries | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 · b167 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
@@ -293,7 +293,7 @@ public repo, an un-annotated superseded decision is ammunition.
 networking API for Voices of the Void
 ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)). Relay ships as a
 compiled mod; its README, and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that
-README links, publish a good deal of its design. Everything in the seven paragraphs below was taken
+README links, publish a good deal of its design. Everything in the eight paragraphs below was taken
 from those two public pages and is used with attribution, which is what Moddy asks for what those
 pages state. No code or asset of Relay's is in this repository, and every mechanism named below is
 this project's own.
@@ -365,6 +365,26 @@ let a client delete props the host still held -- one guard registered on a route
 and two verbs resolved on a base class and called on subclasses that override them. None of those
 had a symptom anyone had reported. The warning is Moddy's; the census, the instrument and the fixes
 are this project's own.
+
+**The per-player profile (b167).** *Source: the README, "Per-player inventory and equipment" and
+"Player save partition and profile".* Relay's README says a returning player "is bound to the same
+host/world profile even when their session PeerId changes", and that the profile "covers the
+supported vitals, inventory, equipment, held item, effects, and player transform". This project
+already stored a player's items on the host under the identity the player proved; what it did not
+have was the rest of that list, and players said so in the field: a joiner started at the host's
+hunger and sleep, and woke up where the host stood. The profile now carries the vitals and the
+last spot the player was standing on beside the items (`coop/items/player_profile.h`); effects are
+not built. Two things differ on purpose. Relay routes a client's inventory actions through the
+host and calls the client's rows "a mirror, not the canonical copy"; here a player's own store is
+live on their machine and streamed to the host, which keeps it. And the README does not say where
+the partition is stored; this project keeps it beside the host's save, not inside it. One thing
+is the same and is not taken from it: the README says Relay's overlay "runs before travel", and
+this project has written a joiner's items into the save object before the world exists since
+June 2026; that README was first published in September 2026. The list is
+Moddy's published design; finding where the game keeps each part (what a player carries is a slot
+of the save object, the vitals live in place on it, and the game moves a joiner to the host's
+saved position), the write before the world exists, the fresh keys for copied items and the
+storage are this project's own.
 
 **The object index, and a correction (b160).** An earlier version of this page credited Relay's
 README for the fact that the engine reports every object's creation and destruction to registered
