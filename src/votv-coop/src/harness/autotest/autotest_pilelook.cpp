@@ -3,7 +3,10 @@
 // mesh's world rotation, and on a client whether the pile is a mirror this peer SPAWNED or its own
 // save-loaded actor bound to the host's eid. The driver joins the two logs by eid. A pile's init()
 // rolls a random mesh roll on every construction, a save load included, so the question the census
-// answers is which of the two kinds takes the host's roll. Nobody moves; nothing is written.
+// answers is which of the two kinds takes the host's roll. The same walk lists every garbage clump
+// (a trash entity's other resting form: one loaded from the save, or thrown and at rest on a box)
+// with its eid and position, and counts the clumps that have no eid at all. Nobody moves; nothing
+// is written.
 
 #include "harness/autotest.h"
 
@@ -58,17 +61,30 @@ void RunPileLookScenario() {
     ::Sleep(60000);   // the snapshot burst, the async load tail and the quiescence re-bind
 
     RunGT([client](std::atomic<int>& d) {
-        int named = 0, unnamed = 0;
+        int named = 0, unnamed = 0, clumps = 0, clumpsUnnamed = 0;
         // Every pile class, the variants included: a walk of the object array with the pile test,
         // where a lookup by one class name would count actorChipPile_C alone.
         const int32_t n = R::NumObjects();
         for (int32_t i = 0; i < n; ++i) {
             void* o = R::ObjectAt(i);
-            if (!o || !R::IsLive(o) || !ue_wrap::prop::IsChipPile(o)) continue;
+            if (!o || !R::IsLive(o)) continue;
+            const bool isClump = ue_wrap::prop::IsGarbageClump(o);
+            if (!isClump && !ue_wrap::prop::IsChipPile(o)) continue;
             if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
             const coop::element::ElementId eid =
                 client ? coop::remote_prop::ResolveMirrorEidByActor(o)
                        : coop::prop_element_tracker::GetPropElementIdForActor(o);
+            if (isClump) {
+                const ue_wrap::FVector at = E::GetActorLocation(o);
+                const bool none = (eid == coop::element::kInvalidId || eid == 0);
+                UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(%.1f,%.1f,%.1f)",
+                        none ? 0u : static_cast<unsigned>(eid),
+                        !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save"),
+                        R::ClassNameOf(o).c_str(), at.X, at.Y, at.Z);
+                ++clumps;
+                if (none) ++clumpsUnnamed;
+                continue;
+            }
             if (eid == coop::element::kInvalidId || eid == 0) { ++unnamed; continue; }
             const ue_wrap::FRotator m = ue_wrap::chip_pile::VisibleMeshWorldRotation(o);
             const ue_wrap::FRotator a = E::GetActorRotation(o);
@@ -80,7 +96,8 @@ void RunPileLookScenario() {
                     look.relScale.X, look.relScale.Y, look.relScale.Z);
             ++named;
         }
-        UE_LOGI("pilelook: DONE named=%d unnamed=%d", named, unnamed);
+        UE_LOGI("pilelook: DONE named=%d unnamed=%d clumps=%d clumpsUnnamed=%d", named, unnamed, clumps,
+                clumpsUnnamed);
         d.store(1);
     });
 }
