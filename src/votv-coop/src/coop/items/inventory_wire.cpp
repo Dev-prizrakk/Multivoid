@@ -45,10 +45,12 @@ std::vector<uint8_t> Serialize(const PlayerInventory& inv) {
     return b;
 }
 
-bool Deserialize(const std::vector<uint8_t>& b, PlayerInventory& out) {
+bool Deserialize(const std::vector<uint8_t>& b, PlayerInventory& out, uint8_t* outVersion) {
     out.inventory.clear(); out.equipment.clear(); out.hold.clear();
     size_t o = 0;
-    uint8_t ver; if (!W::RdU8(b, o, ver) || ver != kVersion) return false;
+    uint8_t ver; if (!W::RdU8(b, o, ver)) return false;
+    if (ver != kVersion && !(outVersion && ver == kVersionProjection)) return false;
+    if (outVersion) *outVersion = ver;
     uint32_t n;
     if (!W::RdU32(b, o, n) || n > W::kMaxRecords || !W::Feasible(n, b, o)) return false;
     out.inventory.resize(n);

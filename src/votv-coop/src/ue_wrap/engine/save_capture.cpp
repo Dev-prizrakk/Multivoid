@@ -98,9 +98,11 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     // 3. Repopulate the in-memory world save from LIVE actors. saveObjects is the critical
     //    step: it walks every int_save_C world actor (props + NPCs, including a turned-on kerfur,
     //    which serializes as its live NPC state -- exactly what a single-player save/reload
-    //    restores). saveTriggers refreshes door/light/keypad states. We deliberately SKIP the
-    //    player-state populates (playerTransform/inventory/heldObj): the joiner overrides those
-    //    with its own per-player state and each has a live coop sync channel. These are pure
+    //    restores). saveTriggers refreshes door/light/keypad states. The capture therefore
+    //    carries the HOST's player state too: saveObjects writes playerTransform and
+    //    inventoryData itself, and the carried items, equipment and hold live in this same
+    //    save object. Nothing is stripped here; the joiner replaces what is per-player on its
+    //    own side, before its world is built (coop/items/player_inventory_sync). These are pure
     //    read-into-array populates -- no actor mutation, no disk write, no save event -- so
     //    nothing "real" happens to the host's session here.
     {

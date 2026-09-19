@@ -19,7 +19,7 @@ namespace INV = ue_wrap::inventory;
 namespace SR  = ue_wrap::save_record;
 
 constexpr int kPollTicks = 240;    // ~2 s at ~120 Hz -- this is an observer, not a hot path
-constexpr int kMaxDiffLines = 12;  // a diff longer than this is summarised, never spammed
+constexpr size_t kMaxDiffLines = 12;  // a list longer than this is summarised, never spammed
 
 // The identity a HUMAN reads a gap by: class + save key. Not an authority key and not a wire
 // identity -- deliberately, since what "the same item" means across peers is exactly the open
@@ -87,35 +87,25 @@ Bag BagOf(const std::vector<SR::SaveRecord>& recs) {
     return b;
 }
 
-// Multiset difference a-minus-b, flattened to "sig xN" strings.
-std::vector<std::string> MinusOf(const Bag& a, const Bag& b) {
-    std::vector<std::string> out;
-    for (const auto& [sig, n] : a) {
-        auto it = b.find(sig);
-        const int extra = n - (it == b.end() ? 0 : it->second);
-        if (extra > 0)
-            out.push_back(extra > 1 ? (sig + " x" + std::to_string(extra)) : sig);
-    }
-    return out;
-}
-
-std::string Join(const std::vector<std::string>& v) {
-    if (v.empty()) return "(none)";
+std::string Join(const Bag& bag) {
+    if (bag.empty()) return "(none)";
     std::string s;
-    for (size_t i = 0; i < v.size() && i < kMaxDiffLines; ++i) {
-        if (i) s += ", ";
-        s += v[i];
+    size_t i = 0;
+    for (const auto& [sig, n] : bag) {
+        if (i == kMaxDiffLines) break;
+        if (i++) s += ", ";
+        s += n > 1 ? sig + " x" + std::to_string(n) : sig;
     }
-    if (v.size() > kMaxDiffLines)
-        s += ", ... (+" + std::to_string(v.size() - kMaxDiffLines) + " more)";
+    if (bag.size() > kMaxDiffLines)
+        s += ", ... (+" + std::to_string(bag.size() - kMaxDiffLines) + " more)";
     return s;
 }
 
-std::string StateKey(int32_t idx, const Bag& live, const Bag& proj) {
-    std::string s = "i" + std::to_string(idx) + ";L";
-    for (const auto& [sig, n] : live) s += sig + "*" + std::to_string(n) + ",";
-    s += ";P";
-    for (const auto& [sig, n] : proj) s += sig + "*" + std::to_string(n) + ",";
+std::string StateKey(const Bag& carried, const Bag& worn) {
+    std::string s = "C";
+    for (const auto& [sig, n] : carried) s += sig + "*" + std::to_string(n) + ",";
+    s += ";W";
+    for (const auto& [sig, n] : worn) s += sig + "*" + std::to_string(n) + ",";
     return s;
 }
 
@@ -128,10 +118,10 @@ void Tick() {
     if (++s_ticks < kPollTicks) return;
     s_ticks = 0;
 
-    INV::LivePersonalStore live;
-    if (!INV::ReadLivePersonalStore(live)) {
-        // Not an error: pre-world / pre-saveSlot this is simply not resolvable yet. Log ONCE so a
-        // permanently-inert reader is visible, then stay quiet.
+    INV::PlayerInventory inv;
+    if (!INV::ReadAll(inv)) {
+        // Not an error: pre-world this is simply not resolvable yet. Log ONCE so a permanently
+        // inert reader is visible, then stay quiet.
         static bool s_warned = false;
         if (!s_warned) {
             s_warned = true;
@@ -141,33 +131,27 @@ void Tick() {
         return;
     }
 
-    INV::PlayerInventory proj;
-    const bool projOk = INV::ReadAll(proj);
-
-    const Bag liveBag = BagOf(live.records);
-    const Bag projBag = projOk ? BagOf(proj.inventory) : Bag{};
+    Bag carried = BagOf(inv.inventory);
+    Bag worn;
+    size_t eqFilled = 0, holdFilled = 0;
+    for (const auto& e : inv.equipment)
+        if (!e.data.className.empty()) { ++eqFilled; ++worn["eq:" + SigOf(e.data)]; }
+    for (const auto& e : inv.hold)
+        if (!e.data.className.empty()) { ++holdFilled; ++worn["hold:" + SigOf(e.data)]; }
 
     // Log only when something CHANGED -- a per-2s heartbeat of an unchanged state is log spam, and
     // the pre-deploy checklist treats a line repeating at a rate the design did not intend as a bug.
     static std::string s_last;
-    const std::string now = StateKey(live.slotIndex, liveBag, projBag);
+    const std::string now = StateKey(carried, worn);
     if (now == s_last) return;
     const bool first = s_last.empty();
     s_last = now;
 
-    const std::vector<std::string> liveOnly = MinusOf(liveBag, projBag);
-    const std::vector<std::string> projOnly = MinusOf(projBag, liveBag);
-    const int gap = static_cast<int>(live.records.size()) -
-                    static_cast<int>(projOk ? proj.inventory.size() : 0);
-
-    UE_LOGI("live_store: %s GObjStack[%d] live=%zu proj=%s gap=%+d | equip=%zu hold=%zu",
-            first ? "FIRST" : "CHANGE", live.slotIndex, live.records.size(),
-            projOk ? std::to_string(proj.inventory.size()).c_str() : "READ-FAILED",
-            gap, proj.equipment.size(), proj.hold.size());
-    UE_LOGI("live_store:   live-only (carried, absent from the projection): %s",
-            Join(liveOnly).c_str());
-    UE_LOGI("live_store:   proj-only (in the projection, not carried):      %s",
-            Join(projOnly).c_str());
+    UE_LOGI("live_store: %s carried=%zu | equip=%zu/%zu hold=%zu/%zu (filled/slots)",
+            first ? "FIRST" : "CHANGE", inv.inventory.size(), eqFilled, inv.equipment.size(),
+            holdFilled, inv.hold.size());
+    UE_LOGI("live_store:   carried: %s", Join(carried).c_str());
+    UE_LOGI("live_store:   worn/held: %s", Join(worn).c_str());
 }
 
 }  // namespace coop::dev::live_store_readout

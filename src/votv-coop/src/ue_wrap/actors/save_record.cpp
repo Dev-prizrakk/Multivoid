@@ -73,6 +73,12 @@ void ReadGroups(const void* save, int32_t off, int32_t elemSize, std::vector<V>&
 
 void WriteClassField(void* dst, const std::wstring& leaf) {
     void* cls = leaf.empty() ? nullptr : R::FindClass(leaf.c_str());
+    // A class travels as its leaf name, which resolves only while the class is loaded. A miss
+    // writes null, and a record with a null class is an item the game cannot materialise, so it
+    // is said out loud rather than lost in silence.
+    if (!cls && !leaf.empty())
+        UE_LOGE("save_record: class '%ls' is not loaded -- the record is written WITHOUT its class",
+                leaf.c_str());
     std::memcpy(dst, &cls, sizeof(void*));
 }
 

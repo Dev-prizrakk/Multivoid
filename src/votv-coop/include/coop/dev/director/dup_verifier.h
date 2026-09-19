@@ -3,10 +3,10 @@
 // winner has it, the loser's take was refused) or TWICE?
 //
 // It COUNTS rather than confirms -- it walks the whole global saveSlot.GObjStack (every
-// propInventory index) plus the player stores and prints every matching row, instead of asking a
-// container "do you still have X?", which would query the very subsystem whose correctness it
-// measures. X is matched by CONTENT SIGNATURE, read off the engine save independently of
-// container_contents_sync.
+// propInventory index, the player's carried slot among them) plus what the player wears and
+// holds, and prints every matching row, instead of asking a container "do you still have X?",
+// which would query the very subsystem whose correctness it measures. X is matched by CONTENT
+// SIGNATURE, read off the engine save independently of container_contents_sync.
 //
 // A verdict counts only behind a positive control: a solo run where a dup is impossible must
 // count exactly 1, or count == 1 on a race cannot separate "no dup" from "instrument blind". The
@@ -44,8 +44,8 @@ ItemSig SigOf(const ue_wrap::save_record::SaveRecord& rec);
 // range.
 ItemSig CaptureContainerSlotSig(void* containerActor, int32_t slotIdx);
 
-// Count instances of `x` across the WHOLE global GObjStack (all propInventory indices) plus the
-// player stores. When `print`, logs every matching row with its location and a scan summary.
+// Count instances of `x` across the WHOLE global GObjStack (all propInventory indices, the
+// player's carried slot included); worn and held matches are logged beside it. When `print`, logs every matching row with its location and a scan summary.
 // Returns the total match count, or -1 if the saveSlot is unresolvable. Game thread.
 int CountItemInstances(const ItemSig& x, bool print);
 

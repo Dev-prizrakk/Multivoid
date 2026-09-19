@@ -47,7 +47,7 @@ struct SaveRecord {
 // ARRAY ELEMENT STRIDE is the 16-ALIGNED struct size, not the dump's raw `Size:` line.
 // Fstruct_save embeds an FTransform, whose FQuat is 16-aligned, so the struct's own alignment
 // is 16 and its element stride is the size rounded up to that -- which is what the SDK reports
-// for every embedded Fstruct_save field. The engine's native loadObjects() walks inventoryData
+// for every embedded Fstruct_save field. The engine walks every TArray<Fstruct_save>
 // at THIS stride, so using the unrounded size reads element i+1's class at the wrong byte: a
 // wild class pointer and a heap over-read, which is a crash from the second element onward.
 // In a dump the bottom-line `Size:` is PropertiesSize; the per-field embedded `size:` is the

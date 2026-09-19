@@ -20,8 +20,8 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace SR = ue_wrap::save_record;
 
-// saveSlot.hpp player-scoped arrays.
-constexpr int32_t kOff_inventoryData = 0x02E0;  // TArray<Fstruct_save>
+// saveSlot.hpp player-scoped arrays. The carried items are not among them: they live in
+// GObjStack[kPersonalSlot], resolved by reflection below.
 constexpr int32_t kOff_equipment     = 0x0440;  // TArray<Fstruct_equipment>
 constexpr int32_t kOff_hold          = 0x0450;  // TArray<Fstruct_equipment>
 
@@ -36,6 +36,12 @@ constexpr int32_t kEquip_tag       = 0x110;  // FName
 // member as 0x120 wide. Same crash class as save_record::kSaveStride if the raw 0x118 is used for
 // the equipment/hold arrays with N>=2.
 constexpr int32_t kEquipStride     = 0x120;
+
+// The player's GObjStack slot. Baked, not restored: prop_inventoryContainer_player_C's component
+// template serializes index=0, and the saveSlot CDO pre-seeds the slot, so it is the one index
+// that is known before any container actor exists -- which is when the join apply runs. The live
+// reader checks the running component against it.
+constexpr int32_t kPersonalSlot    = 0;
 
 ue_wrap::CachedObjRef g_gm;
 int32_t g_offSave = -1;
@@ -58,6 +64,15 @@ int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
     return slot;
 }
 
+// The contents TArray header of GObjStack[kPersonalSlot] on `save` (the struct_mObject element's
+// single field, at +0), or null when the save object has no such slot.
+uint8_t* PersonalSlotOf(void* save) {
+    if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return nullptr;
+    const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
+    if (kPersonalSlot >= stack.num) return nullptr;
+    return const_cast<uint8_t*>(stack.data) + static_cast<size_t>(kPersonalSlot) * SR::kMxStride;
+}
+
 template <class T> T ReadAt(const void* base, int32_t off) {
     T v{};
     std::memcpy(&v, reinterpret_cast<const uint8_t*>(base) + off, sizeof(T));
@@ -78,19 +93,19 @@ void WriteEquipRecord(uint8_t* base, const EquipRecord& r) {
     SR::WriteFNameField(base + kEquip_tag, r.tag);
 }
 
-// Build one engine TArray<RecordT> from `recs` and overwrite the header at saveSlot+off. The
+// Build one engine TArray<RecordT> from `recs` and overwrite the header at base+off. The
 // old buffer is intentionally orphaned (see ApplyToSaveObject's contract).
 template <class RecordT, class F>
-void BuildAndSwapArray(void* saveSlot, int32_t off, int32_t stride,
+void BuildAndSwapArray(void* base, int32_t off, int32_t stride,
                        const std::vector<RecordT>& recs, F writeOne) {
     const int32_t num = static_cast<int32_t>(recs.size());
     void* buf = SR::AllocZeroed(static_cast<size_t>(num), static_cast<size_t>(stride));
     if (buf) {
         for (int32_t i = 0; i < num; ++i)
             writeOne(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * stride, recs[i]);
-        SR::WriteArrHeader(saveSlot, off, buf, num);
+        SR::WriteArrHeader(base, off, buf, num);
     } else {
-        SR::WriteArrHeader(saveSlot, off, nullptr, 0);  // num==0 or alloc failed -> empty
+        SR::WriteArrHeader(base, off, nullptr, 0);  // num==0 or alloc failed -> empty
     }
 }
 
@@ -109,15 +124,11 @@ bool ReadAll(PlayerInventory& out) {
     out.inventory.clear();
     out.equipment.clear();
     out.hold.clear();
+    LivePersonalStore live;
+    if (!ReadLivePersonalStore(live)) return false;  // pre-world: no container, nothing carried yet
     void* save = ResolveSaveSlot();
     if (!save) return false;
-    const SR::Arr inv = SR::ReadArr(save, kOff_inventoryData);
-    out.inventory.reserve(static_cast<size_t>(inv.num));
-    for (int32_t i = 0; i < inv.num; ++i) {
-        SR::SaveRecord r;
-        SR::ReadSaveRecord(inv.data + static_cast<size_t>(i) * SR::kSaveStride, r);
-        out.inventory.push_back(std::move(r));
-    }
+    out.inventory = std::move(live.records);
     const SR::Arr eq = SR::ReadArr(save, kOff_equipment);
     out.equipment.reserve(static_cast<size_t>(eq.num));
     for (int32_t i = 0; i < eq.num; ++i) {
@@ -167,6 +178,16 @@ bool ReadLivePersonalStore(LivePersonalStore& out) {
     if (CachedOffset(g_offInvIndex, R::ClassOf(inv), L"Index") < 0) return false;
     const int32_t idx = ReadAt<int32_t>(inv, g_offInvIndex);
     if (idx < 0) return false;  // -1 = never initialised
+    if (idx != kPersonalSlot) {
+        // The join apply wrote kPersonalSlot before this component existed. A different running
+        // index means the apply and the game disagree about where the player's items live.
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGE("inventory: the player container runs on GObjStack[%d], not the baked slot %d "
+                    "-- the join apply addressed the wrong slot", idx, kPersonalSlot);
+        }
+    }
 
     if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return false;
     const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
@@ -193,13 +214,29 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
                 "refusing to write empty inventory over saveSlot %p", saveSlot);
         return false;
     }
-    BuildAndSwapArray(saveSlot, kOff_inventoryData, SR::kSaveStride, inv.inventory,
+    uint8_t* carried = PersonalSlotOf(saveSlot);
+    if (!carried) {
+        UE_LOGE("inventory: ApplyToSaveObject -- save object %p has no GObjStack[%d]; refusing to "
+                "write a partial inventory", saveSlot, kPersonalSlot);
+        return false;
+    }
+    BuildAndSwapArray(carried, 0, SR::kSaveStride, inv.inventory,
                       [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r); });
-    BuildAndSwapArray(saveSlot, kOff_equipment, kEquipStride, inv.equipment,
+    // equipment and hold are FIXED-SHAPE slot arrays: the game finds an empty slot to equip into
+    // (AddEquipment: Array_Find, "Not enough space" on -1) and writes hold[0] in place, and
+    // nothing in it ever grows them. A profile with fewer slots than the save object -- an empty
+    // one above all -- is padded with blank slots to the shape the save object came with.
+    auto slotsOf = [saveSlot](int32_t off, const std::vector<EquipRecord>& recs) {
+        std::vector<EquipRecord> out = recs;
+        const size_t shape = static_cast<size_t>(SR::ReadArr(saveSlot, off).num);
+        if (out.size() < shape) out.resize(shape);
+        return out;
+    };
+    BuildAndSwapArray(saveSlot, kOff_equipment, kEquipStride, slotsOf(kOff_equipment, inv.equipment),
                       [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
-    BuildAndSwapArray(saveSlot, kOff_hold, kEquipStride, inv.hold,
+    BuildAndSwapArray(saveSlot, kOff_hold, kEquipStride, slotsOf(kOff_hold, inv.hold),
                       [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
-    UE_LOGI("inventory: ApplyToSaveObject(%p) wrote inventory=%zu equipment=%zu hold=%zu",
+    UE_LOGI("inventory: ApplyToSaveObject(%p) wrote carried=%zu equipment=%zu hold=%zu",
             saveSlot, inv.inventory.size(), inv.equipment.size(), inv.hold.size());
     return true;
 }

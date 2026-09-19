@@ -34,7 +34,7 @@ struct EquipRecord {
 
 // The full player-scoped inventory snapshot.
 struct PlayerInventory {
-    std::vector<ue_wrap::save_record::SaveRecord> inventory;  // saveSlot.inventoryData
+    std::vector<ue_wrap::save_record::SaveRecord> inventory;  // carried: saveSlot.GObjStack[0]
     std::vector<EquipRecord> equipment;  // saveSlot.equipment (worn)
     std::vector<EquipRecord> hold;       // saveSlot.hold (hands)
 };
@@ -43,16 +43,13 @@ struct PlayerInventory {
 // re-walks on a level transition. null if not yet resolvable. Game thread.
 void* ResolveSaveSlot();
 
-// Read the player-scoped inventory off the live saveSlot into `out` (cleared first). False if
-// the saveSlot is unresolvable. Pure field reads plus FName::ToString, no UFunction dispatch.
-// Game thread.
+// Read what the local player carries, wears and holds into `out` (cleared first): the live
+// personal store below, plus saveSlot.equipment and saveSlot.hold, all three of which gameplay
+// reads and writes in place. False before the world is up (no player container yet). Pure field
+// reads plus FName::ToString, no UFunction dispatch. Game thread.
 //
-// WHAT THIS READS, precisely: the three arrays above are the SAVE-SIDE view. `inventoryData`
-// is a PROJECTION written by mainGamemode::saveObjects, and the cooked game has no gameplay
-// reader for it at all -- its only reader is the save-slot menu's repair routine. What a
-// player actually carries lives in the LIVE store, ReadLivePersonalStore below.
-// `equipment` and `hold` DO have live gameplay readers, so those two mean what they look
-// like; `inventory` does not.
+// saveSlot.inventoryData is deliberately not read: it is a projection mainGamemode::saveObjects
+// writes and only the save-slot menu's repair routine reads, and on a client it never refreshes.
 bool ReadAll(PlayerInventory& out);
 
 // ---- THE LIVE PERSONAL STORE (read-only) ------------------------------------------------------
@@ -81,25 +78,25 @@ struct LivePersonalStore {
 // `Player == true` is the ADDRESS ASSERTION here, and the same flag is a REFUSAL in
 // coop/props/container_contents_sync -- deliberately, from opposite sides of one boundary:
 // that lane must never author a personal store, and this reader must never read anything
-// else. READ-ONLY BY CONSTRUCTION: there is no live-store writer in this header, and nothing
-// wires these records to the network yet. coop/dev/live_store_readout is the dev probe that
-// reads them.
+// else. ReadAll is the lane's reader and goes through this; coop/dev/live_store_readout prints
+// the same records by content. The only writer is ApplyToSaveObject below, which the lane calls
+// on a save object whose world does not exist yet.
 bool ReadLivePersonalStore(LivePersonalStore& out);
 
-// The WRITE side: the apply on join.
+// The WRITE side, the apply on join: overwrite the player's GObjStack slot, equipment and hold
+// on `saveSlot` with `inv`, as engine-OWNED TArrays built through reflection::EngineAlloc (FNames
+// interned, FStrings engine-minted, UClasses FindClass'd). The caller writes the REGISTERED save
+// object BEFORE the native loadObjects() materializes it, which is the state a single-player load
+// starts from: the gamemode's BeginPlay calls propInventory.recalculateNames() on every world
+// start, rebuilding the container's name array from the slot's records, and volume and mass
+// follow from the names through the game's own updateVolumesAndMass. equipment and hold are
+// fixed-shape slot arrays the game never grows, so they keep the save object's slot count.
 //
-// Overwrite the player-scoped arrays (inventoryData, equipment, hold) on `saveSlot` with
-// `inv`, constructing engine-OWNED TArrays through reflection::EngineAlloc (FNames interned,
-// FStrings engine-minted, UClasses FindClass'd). The caller writes the REGISTERED save object
-// BEFORE the game's native loadObjects() materializes it on the next load, so the game's own
-// code builds the live inventory from our data: no live TArray poke, no second reload.
-//
-// The PREVIOUS array buffers are intentionally orphaned, a bounded few kilobytes once per join:
-// recursively freeing the old nested Fstruct_save sub-arrays and FString buffers is far more
-// crash-prone than leaking them, and the engine never double-frees a buffer it has lost the
-// pointer to. Buffers WE allocate are GMalloc-owned, so the engine's later realloc or GC free of
-// them is allocator-matched. Returns false if `saveSlot` is null or dead, or GMalloc is
-// unresolved -- EngineAlloc then returns null and the arrays degrade to empty. Game thread.
+// The PREVIOUS buffers are orphaned on purpose, a bounded few kilobytes once per join: freeing
+// the old nested sub-arrays and FString buffers recursively is far more crash-prone than leaking
+// them, and the engine never double-frees a buffer it has lost. Ours are GMalloc-owned, so a
+// later engine realloc or free is allocator-matched. False, having written nothing, if
+// `saveSlot` is null or dead, GMalloc is unresolved, or there is no player slot. Game thread.
 bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv);
 
 }  // namespace ue_wrap::inventory

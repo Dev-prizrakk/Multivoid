@@ -38,15 +38,18 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 // KEY-UNIQUENESS AUTHORITY mint: force-mint a fresh unique Key onto `self` REGARDLESS of its
 // current Key. The host census calls it when a second live actor is found carrying an
 // already-indexed Key, which the game's own save data produces -- it ships clone families
-// sharing one GUID, and the identity layer assumes uniqueness. Format `rk_<64-bit-random-hex>`,
-// 19 characters, inside the 31-character wire key field; random rather than the cs_ counter
-// format, so a key PERSISTED into a save can never collide with a future boot's mints.
-//
-// Resolves setKey by climbing from the actual class to the nearest ancestor that declares it,
-// since FindFunction matches the exact owner and does not climb the superstruct chain itself:
-// actorChipPile and prop_garbageClump declare their own, trashBitsPile takes actor_save's, and
-// the prop lineage takes Aprop_C's. Returns the CONFIRMED re-read key on success, or an empty
+// sharing one GUID, and the identity layer assumes uniqueness. Resolves setKey by climbing from
+// the actual class to the nearest ancestor that declares it, since FindFunction matches the
+// exact owner: actorChipPile and prop_garbageClump declare their own, trashBitsPile takes
+// actor_save's, the prop lineage Aprop_C's. Returns the CONFIRMED re-read key, or an empty
 // string on any failure, where the caller keeps the old key and logs. Game thread only.
 std::wstring MintFreshKeyForDuplicate(void* self);
+
+// The key format that mint uses, on its own: `rk_<64-bit-random-hex>`, 19 characters, inside the
+// 31-character wire key field; random rather than the cs_ counter, so a key PERSISTED into a save
+// cannot collide with a later boot's mints. For a caller that re-keys a save RECORD rather than
+// a live actor: a record copied out of another inventory must not keep its source's key, since
+// the game's key index holds one object per key. Any thread.
+std::wstring RandomKeyString();
 
 }  // namespace coop::prop_synth_key

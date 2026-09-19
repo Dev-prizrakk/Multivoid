@@ -310,12 +310,12 @@ void DriveMenuModeJoinWorldBoot() {
         const ULONGLONG w0 = ::GetTickCount64();
         while (!PIS::HasPendingApply()) {
             if (coop::shutdown::IsShuttingDown() || !g_session.running()) return;
-            // A 20 s cap for the degenerate case (the host has no inventory for us, or never
-            // sends); on a timeout the load proceeds and the apply hook skips, keeping the loaded
-            // inventory.
+            // A 20 s cap for the degenerate case (the host never sends). On a timeout the load
+            // proceeds; the apply hook then empties the host's items out of the save object and
+            // keeps this session from reporting an inventory back.
             if (::GetTickCount64() - w0 > 20000) {
-                UE_LOGW("harness: inventory apply blob did not arrive in 20s -- loading with the "
-                        "loaded inventory (the apply hook will skip)");
+                UE_LOGW("harness: inventory apply blob did not arrive in 20s -- loading without a "
+                        "profile (the apply hook empties the host's items)");
                 return;
             }
             PostPumpComposite([] {
@@ -350,13 +350,16 @@ void DriveMenuModeJoinWorldBoot() {
         Post([rst] { ue_wrap::engine::ResetCachedSave(); rst->store(1); });
         while (rst->load() == 0 && !coop::shutdown::IsShuttingDown()) ::Sleep(5);
         waitForApplyBlob();
+        coop::player_inventory_sync::BeginJoinApply();
         if (!BootStorySaveBlocking(/*forceFresh=*/false, slot.c_str(), mode)) {
             UE_LOGW("harness: coop-slot load did not reach gameplay -- falling back fresh");
+            coop::player_inventory_sync::BeginJoinApply();
             BootStorySaveBlocking(/*forceFresh=*/true);
         }
     } else {
         UE_LOGI("harness: host save unavailable/failed -- fresh-booting the ephemeral baseline");
         waitForApplyBlob();
+        coop::player_inventory_sync::BeginJoinApply();
         BootStorySaveBlocking(/*forceFresh=*/true);
     }
 }

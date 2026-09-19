@@ -95,23 +95,11 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
     return ue_wrap::prop::GetInteractableKeyString(self);
 }
 
-std::wstring MintFreshKeyForDuplicate(void* self) {
-    if (!self) return L"";
-    void* cls = R::ClassOf(self);
-    // ResolveSetKeyFn climbs to the nearest declaring ancestor itself: the leaf for
-    // actorChipPile and prop_garbageClump, actor_save_C for trashBitsPile, Aprop_C for
-    // the prop lineage.
-    void* setKeyFn = ResolveSetKeyFn(cls);
-    if (!setKeyFn) {
-        UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor any SuperStruct ancestor) -- cannot re-key duplicate",
-                R::ClassNameOf(self).c_str());
-        return L"";
-    }
-    // Random, not counter-based like cs_: a re-key PERSISTS into the game's save, so
-    // it must stay unique across boots -- a counter restarting at 0 could re-mint a
-    // key already baked into an older record. 64 random bits is collision-free at this
-    // project's key volumes. The one caller re-keys only on the game thread, but the
-    // RNG stays mutex-guarded for the cost of nothing.
+std::wstring RandomKeyString() {
+    // Random, not counter-based like cs_: the key PERSISTS into the game's save, so it must stay
+    // unique across boots -- a counter restarting at 0 could re-mint a key already baked into an
+    // older record. 64 random bits is collision-free at this project's key volumes. The callers
+    // are game-thread, but the RNG stays mutex-guarded for the cost of nothing.
     static std::mutex sRngMutex;
     uint64_t r;
     {
@@ -126,6 +114,23 @@ std::wstring MintFreshKeyForDuplicate(void* self) {
     }
     wchar_t buf[64];
     swprintf(buf, 64, L"rk_%016llx", static_cast<unsigned long long>(r));
+    return buf;
+}
+
+std::wstring MintFreshKeyForDuplicate(void* self) {
+    if (!self) return L"";
+    void* cls = R::ClassOf(self);
+    // ResolveSetKeyFn climbs to the nearest declaring ancestor itself: the leaf for
+    // actorChipPile and prop_garbageClump, actor_save_C for trashBitsPile, Aprop_C for
+    // the prop lineage.
+    void* setKeyFn = ResolveSetKeyFn(cls);
+    if (!setKeyFn) {
+        UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor any SuperStruct ancestor) -- cannot re-key duplicate",
+                R::ClassNameOf(self).c_str());
+        return L"";
+    }
+    const std::wstring fresh = RandomKeyString();
+    const wchar_t* buf = fresh.c_str();
     const R::FName keyFName = ue_wrap::fname_utils::StringToFName(buf);
     if (keyFName.ComparisonIndex == 0) {
         UE_LOGW("synth-key: rekey StringToFName('%ls') -> NAME_None; cannot re-key", buf);

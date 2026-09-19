@@ -157,7 +157,12 @@ host sleeping it out, grants everyone a full night. Nightmares roll on the host 
 
 Per player and private: the contents never cross the wire as gameplay. The host stores each
 peer's inventory per save under the identity the peer proved at admission and hands it back at
-the next join, before the world exists (`coop/items/player_inventory_sync`). That identity is
+the next join, before the world exists (`coop/items/player_inventory_sync`). The hand-back is a
+substitution, not an addition: a joiner's world is built from a capture of the host's save
+object, and that object is where the game keeps what a player carries (`GObjStack[0]`), wears
+and holds, so whatever is not replaced there is the host's. A first join gets the three
+starter items as copies under fresh keys, because the game's key index holds one object per
+key and a copy under its source's key aliases the original the moment either is dropped. That identity is
 a key file beside the game executable, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is

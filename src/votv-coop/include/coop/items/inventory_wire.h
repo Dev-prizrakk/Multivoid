@@ -18,14 +18,22 @@
 
 namespace coop::inventory_wire {
 
-// Current blob format version (the first byte). Bump on any layout change.
-inline constexpr uint8_t kVersion = 1;
+// Current blob format version (the first byte). Bump on any change of layout OR meaning.
+//   1 -- the inventory third was saveSlot.inventoryData, a save-side projection the game never
+//        reads back; equipment and hold were live data. Still parsed (same layout), so the host
+//        can lift a stored profile out of it; see Deserialize's `outVersion`.
+//   2 -- the inventory third is what the player carries (saveSlot.GObjStack[0]).
+inline constexpr uint8_t kVersion = 2;
+inline constexpr uint8_t kVersionProjection = 1;
 
 // Serialize `inv` into a fresh blob (always succeeds; bounded by the inventory size).
 std::vector<uint8_t> Serialize(const ue_wrap::inventory::PlayerInventory& inv);
 
-// Parse `blob` back into `out` (cleared first). False on a truncated / malformed / wrong-
-// version blob (a corrupt or hostile blob must never over-read or over-allocate).
-bool Deserialize(const std::vector<uint8_t>& blob, ue_wrap::inventory::PlayerInventory& out);
+// Parse `blob` back into `out` (cleared first). False on a truncated / malformed / unknown-
+// version blob (a corrupt or hostile blob must never over-read or over-allocate). With
+// `outVersion` null only kVersion parses; with it set, a kVersionProjection blob parses too and
+// the caller is told which it got -- its inventory third is then NOT what the player carried.
+bool Deserialize(const std::vector<uint8_t>& blob, ue_wrap::inventory::PlayerInventory& out,
+                 uint8_t* outVersion = nullptr);
 
 }  // namespace coop::inventory_wire

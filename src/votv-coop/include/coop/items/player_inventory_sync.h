@@ -1,15 +1,15 @@
-// coop/items/player_inventory_sync.h -- a per-player client inventory, host-persisted and
-// keyed by GUID.
+// coop/items/player_inventory_sync.h -- what each player carries, wears and holds, per player,
+// host-persisted at <game dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
+// key that peer PROVED at admission (coop/net/peer_identity.h), never from a value it sent.
 //
-// Each player keeps their own inventory instead of inheriting the host save's, in the
-// Minecraft shape: the HOST persists it at SaveGamesDir()/<save>/coop_players/<guid>.json,
-// keyed by the client's durable GUID -- derived from the key that peer PROVED at admission
-// (coop/net/peer_identity.h), never from a value it sent.
-//
-// The four halves, in the order a session uses them: the host makes sure a joining peer's
-// file exists; the host sends that peer its saved inventory at the connect replay, which the
-// client stashes and writes into the save object before the world materialises; the client
-// streams its inventory back as it changes; the host persists each complete, changed blob.
+// A joiner's world is built from a capture of the HOST's save object, and the carried items
+// live in that object (saveSlot.GObjStack[0]), so without a substitution every joiner carries
+// the host's items under the host's keys. In session order: the host sends a joining peer its
+// profile while that peer is still pre-world (a first join gets a starter kit under fresh
+// keys), and the client writes it into the save object before the world materialises; the
+// client streams its profile back as it changes, only from a world that was built from one;
+// the host persists each complete, changed blob. A file exists only once a client has
+// streamed, so a missing file IS the first-join test.
 
 #pragma once
 
@@ -38,17 +38,23 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot);
 // ---- the live apply on join: host to client, then the save-object-ready hook ----
 
 // HOST: send peer `peerSlot` its persisted per-player inventory (read from coop_players/<guid>.json,
-// FNV-verified, .bak fallback, EMPTY on missing/corrupt -- fail-safe, never leaks another player's
-// inventory). Chunked to that ONE slot over PlayerInventoryBlob. Called at the host's connect-replay
-// edge (subsystems ConnectReplayForSlot), right after EnsurePlayerFile. No-op off the host or when
-// the peer's GUID hasn't arrived. Returns true iff the blob was actually enqueued -- the caller
-// (HostPersistTick) latches "sent" ONLY on true, and retries next tick on a channel-busy refusal
+// FNV-verified, .bak fallback, the starter kit on missing/corrupt -- never another player's
+// inventory). Chunked to that ONE slot over PlayerInventoryBlob. Called from the host tick the
+// moment the slot is connected and its GUID has arrived, so the blob lands in the joiner's
+// pre-world window. No-op off the host or when the peer's GUID hasn't arrived. Returns true iff
+// the blob was actually enqueued -- the caller (HostPersistTick) latches "sent" ONLY on true, and retries next tick on a channel-busy refusal
 // (else the connect-edge refusal was never retried -> the client never got its inventory). Game thread.
 bool SendInventoryToSlot(int peerSlot);
 
 // CLIENT: true once the host's on-join apply blob has arrived + deserialized (the join boot waits
 // on this before loading the world, so the SaveObjectReadyHook always has the data). Game thread.
 bool HasPendingApply();
+
+// CLIENT: the next save object to come ready belongs to a join, so the hook may substitute the
+// profile into it (or empty the host's items out of it when none arrived). One-shot, consumed by
+// the hook and cleared on disconnect; the join boot calls it right before each world load. Every
+// other load in the process -- a later Host-with-save above all -- is left alone. Any thread.
+void BeginJoinApply();
 
 // Per-slot disconnect (host): flush that peer's last inventory blob to disk + drop its
 // in-memory entry. Client: no-op. Game thread.
@@ -66,12 +72,5 @@ void FlushAllToDisk();
 // saveSlot inventory a few seconds after world-up and logs what it found; that part is a no-op
 // unless the flag is set. Game thread.
 void Tick();
-
-// HOST-only: ensure peer `peerSlot`'s per-save inventory file exists. Builds
-// <SaveGames>/<hostSlot>/coop_players/<guid>.json (guid = the Join-carried GUID for that
-// slot); creates the coop_players/ dir + an empty-inventory placeholder file if absent.
-// No-op off the host, or while the peer's GUID has not arrived (its Join has not landed).
-// Called at the host's connect-replay edge (subsystems ConnectReplayForSlot). Game thread.
-void EnsurePlayerFile(int peerSlot);
 
 }  // namespace coop::player_inventory_sync

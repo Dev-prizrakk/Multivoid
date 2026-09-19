@@ -2,23 +2,21 @@
 // inventory store (ini live_store_readout=1, off by default). Not behind the developer gate,
 // since it neither sends nor mutates cross-peer state; the ini key is the only one.
 //
-// The save-side projection (saveSlot.inventoryData) is what our own lane reads, and it is a
-// poor instrument: the field has no gameplay reader in the cooked game -- the projection copy
-// writes it, the save-slot menu's repair routine reads it -- and on a client it never refreshes
-// during a session, because save_block holds the gamemode's disableSave true. So what a player
-// carries was not observable on a client, and the live-versus-projection gap could be counted
-// but never attributed to a record. This prints that gap BY CONTENT.
+// What a player carries lives in saveSlot.GObjStack[0] and what they wear and hold in
+// saveSlot.equipment / hold; the inventory lane moves exactly those three. This prints them BY
+// CONTENT -- class, save key, payload shape -- on change, which is how "the joiner carries the
+// host's items under the host's keys" was measured, and how a rejoin is checked against it.
 //
-// Read-only by construction: it calls ue_wrap::inventory::ReadLivePersonalStore and ReadAll,
-// field reads both, and no UFunction. An earlier probe here called mainGamemode::saveObjects to
-// "look", which refreshed inventoryData, drove the inventory sync's poll into a stream and a
-// host persist, and rewrote a player's blob with a state no organic run produces.
+// Read-only by construction: it calls ue_wrap::inventory::ReadAll, field reads only, and no
+// UFunction. An earlier probe here called mainGamemode::saveObjects to
+// "look", which drove the inventory sync's poll into a stream and a host persist, and rewrote a
+// player's blob with a state no organic run produces.
 
 #pragma once
 
 namespace coop::dev::live_store_readout {
 
-// Poll the live store + the projection and log on CHANGE (no-op unless ini
+// Poll the carried, worn and held records and log on CHANGE (no-op unless ini
 // live_store_readout=1). Game thread.
 void Tick();
 

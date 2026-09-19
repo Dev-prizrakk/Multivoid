@@ -129,62 +129,30 @@ int CountItemInstances(const ItemSig& x, bool print) {
         UE_LOGW("dup_verifier: could not resolve saveSlot.GObjStack offset -- GObjStack count is BLIND");
     }
 
-    // (2) The player stores read a DIFFERENT way (saveSlot.inventoryData, equipment, hold) -- a
-    // cross-check against the GObjStack walk. If X shows here but NOT in GObjStack, the "player
-    // inventory lives in GObjStack" premise is incomplete for this build and these must be ADDED to
-    // the authoritative count; the positive control (phaseA and phaseB below both 1) is what
-    // decides whether `player` double-counts GObjStack. It is logged as READ-OK or READ-FAILED
-    // because a bare number would FUSE two answers: "read fine, found nothing" and "the read
-    // failed".
-    //
-    // READ-FAILED is in fact UNREACHABLE from any run that prints a COUNT line at all, because this
-    // function's `!save` guard and INV::ReadAll gate on the SAME INV::ResolveSaveSlot(), inside the
-    // same game-thread task. An unresolvable saveSlot returns -1 above and prints no COUNT; a
-    // resolvable one means ReadAll's resolver succeeds too. So every `player=0` on a line that also
-    // printed a scan summary meant "read succeeded, found zero", and was never ambiguous. The
-    // branch below stays a defensive tripwire: if it fires, the shared-resolver invariant has
-    // broken and the count is not to be trusted.
+    // (2) What the player wears and holds (saveSlot.equipment, saveSlot.hold): the two player
+    // stores that are NOT a GObjStack slice. What the player carries is GObjStack[0] and is in the
+    // walk above already, so it is not counted a second time here. Logged as READ-OK or
+    // READ-FAILED because a bare number would fuse "read fine, found nothing" with "the read
+    // failed"; ReadAll fails before the world is up (no player container yet).
     INV::PlayerInventory pinv;
     const bool playerReadOk = INV::ReadAll(pinv);
     int playerRows = 0;
     if (playerReadOk) {
-        int k = 0;
-        playerRows = static_cast<int>(pinv.inventory.size() + pinv.equipment.size() + pinv.hold.size());
-        for (const auto& r : pinv.inventory) { if (SigOf(r) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH inventoryData[%d] cls=%ls key=%ls", k, r.className.c_str(), r.key.c_str()); } ++k; }
+        playerRows = static_cast<int>(pinv.equipment.size() + pinv.hold.size());
         for (const auto& e : pinv.equipment) if (SigOf(e.data) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH equipment cls=%ls key=%ls", e.data.className.c_str(), e.data.key.c_str()); }
         for (const auto& e : pinv.hold)      if (SigOf(e.data) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH hold cls=%ls key=%ls", e.data.className.c_str(), e.data.key.c_str()); }
     } else {
-        // Naming the cause precisely, because a tripwire that lists several possible causes is one
-        // symptom for two reasons and settles nothing. ReadAll has exactly TWO returns -- the
-        // shared-resolver guard, and `return true` -- and its three offsets are compile-time
-        // constants, so there is no post-resolve failure path. We already passed our own `!save`
-        // guard with the SAME resolver in the SAME game-thread task, so the only way to reach this
-        // line is the saveSlot dying BETWEEN the two calls inside one task. Nothing else can
-        // produce it.
-        UE_LOGW("dup_verifier: INV::ReadAll FAILED *after* our own saveSlot resolve SUCCEEDED -- the "
-                "inv/eq/hold count is BLIND, NOT zero. This is the shared-resolver tripwire: the "
-                "saveSlot died mid-GT-task. Treat the whole COUNT as untrustworthy, not just this half");
-    }
-
-    // The player stores are also printed in FULL (not just matches) so the run answers "what IS in
-    // inventoryData" -- the question that separates 'the mirror went stale' from 'taken items never
-    // land there', which a match-only count can never settle.
-    if (print && playerReadOk) {
-        int k = 0;
-        for (const auto& r : pinv.inventory)
-            UE_LOGI("dup_verifier:   inventoryData[%d] cls=%ls key=%ls", k++, r.className.c_str(), r.key.c_str());
+        UE_LOGW("dup_verifier: INV::ReadAll FAILED -- the equipment/hold count is BLIND, NOT zero");
     }
 
     const std::string playerVerdict =
         playerReadOk ? (std::to_string(player) + " READ-OK") : std::string("BLIND(READ-FAILED)");
-    UE_LOGI("dup_verifier: COUNT X(cls=%ls key=%ls) -- GObjStack=%d player=%s (inv/eq/hold rows=%d) "
+    UE_LOGI("dup_verifier: COUNT X(cls=%ls key=%ls) -- GObjStack=%d worn/held=%s (eq/hold rows=%d) "
             "(scanned %d rows in %d non-empty slices)",
             x.className.c_str(), x.key.c_str(), gobj, playerVerdict.c_str(),
             playerRows, scannedRows, scannedSlices);
-    // Primary count = GObjStack, the authoritative store. `player` is logged as a cross-check for
-    // the control to interpret: 0 means disjoint, or that `player` IS a GObjStack slice; above 0
-    // means a separate store to fold in. The control run resolves the topology before any race
-    // verdict.
+    // Primary count = GObjStack, which holds every container's contents and what the player
+    // carries. The worn/held count is a separate store, logged for the reader to fold in.
     return gobj;
 }
 

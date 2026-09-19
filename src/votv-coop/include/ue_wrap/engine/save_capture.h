@@ -24,8 +24,8 @@ namespace ue_wrap::save_capture {
 // serialize it to `scratchSlotName` via GameplayStatics::SaveGameToSlot. The slot name is OURS (a
 // transient zcoop_* file the caller deletes after reading), so the player's canonical slot is
 // never named, opened, or written: this is not a real save and cannot clobber the host's
-// progress. Player-state populates (playerTransform/inventory/heldObj) are deliberately skipped,
-// because the joiner overrides those and each has its own live coop sync channel.
+// progress. The capture carries the host's own player state (the save object is its live store);
+// the joiner replaces the per-player part on its side, before its world is built.
 //
 // Returns true iff the scratch .sav was written. GAME THREAD ONLY -- it calls mainGamemode
 // UFunctions + the engine serializer, both ProcessEvent-dispatched.

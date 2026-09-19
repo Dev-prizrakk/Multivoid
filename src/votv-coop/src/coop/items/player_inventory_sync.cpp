@@ -8,6 +8,7 @@
 #include "coop/items/inventory_wire.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_synth_key.h"  // RandomKeyString, the fresh key of a copied record
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/save/save_transfer.h"
@@ -62,15 +63,24 @@ constexpr auto kAsmTtl      = std::chrono::seconds(30);
 // The live per-player apply on join. The host pushes each joiner its persisted inventory
 // (coop_players/<slot>/<guid>.json); the client buffers it and the pre-materialise save-object
 // hook substitutes it into the freshly loaded save object before the native load builds the
-// live world from it, so the joiner gets their own items, not the host's save inventory. The
-// only fallback is the hook's no-op for a blob that never arrived, which keeps the loaded
-// inventory rather than wiping.
+// live world from it, so the joiner gets their own items, not the host's. The loaded save object
+// is a capture of the HOST's, so what it carries is never this player's: with no blob the hook
+// empties it rather than keep it.
 
 // Client: the host's on-join apply blob, reassembled here (a separate assembler from the
 // host's receive path, since host-to-client is a distinct stream direction).
 coop::blob_chunks::Assembler g_clientAssembler;
 ue_wrap::inventory::PlayerInventory g_pendingApply;
 std::atomic<bool> g_hasPendingApply{false};
+// Client: this session's world was built from a host profile. The stream to the host is gated on
+// it, because a world that came up without one carries nothing of the player's, and streaming that
+// would overwrite the good profile on the host with an empty one.
+bool g_profileApplied = false;
+// Client: the next save object to come ready is a JOIN's. Set by the join boot on its own thread
+// right before it loads a world, consumed by the hook. Without it the hook cannot tell a join from
+// any other load in this process: the session's role outlives a stopped session, so "I am a
+// client" stayed true through a later Host-with-save, whose load the hook would then have emptied.
+std::atomic<bool> g_joinApplyArmed{false};
 
 // Host: the per-slot send sequence for the on-join push (independent of the client stream's
 // sequence space; assembler keys are per sender and sequence, so they never collide).
@@ -264,8 +274,9 @@ void ClientStreamTick(coop::net::Session* s) {
     const Clock::time_point now = Clock::now();
     if (now - g_lastPoll < kClientPoll) return;
     g_lastPoll = now;
+    if (!g_profileApplied) return;  // this world holds no profile of ours to report
     ue_wrap::inventory::PlayerInventory inv;
-    if (!ue_wrap::inventory::ReadAll(inv)) return;  // saveSlot not up yet
+    if (!ue_wrap::inventory::ReadAll(inv)) return;  // world not up yet
     const std::vector<uint8_t> blob = coop::inventory_wire::Serialize(inv);
     const uint64_t hash = coop::blob_chunks::Fnv64(blob);
     if (hash == g_lastSentHash) return;  // unchanged -> don't re-send
@@ -300,25 +311,32 @@ void HostPersistTick(coop::net::Session* s) {
 
 // Client: the engine's pre-materialise hook, registered in Install. Fires on the game thread
 // with the freshly loaded save object, before the native load builds the world from it, the
-// one window to substitute this client's inventory. Self-gates: only a client, only with a
-// pending blob (the join boot waits for it). On a miss it leaves the loaded inventory rather
-// than wiping; it never destroys data it cannot replace.
+// one window to substitute this client's inventory. Fires for every load in the process, so it
+// acts only on the one the join boot armed (BeginJoinApply), once. The join boot waits for the
+// blob; if it still is not here, the host's items are emptied out of the save
+// object all the same -- they are the host's, not data of this player's that could be lost -- and
+// the stream stays shut for the session, so the profile on the host survives for the next join.
 void OnSaveObjectReady(void* saveSlotObject) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Client) return;  // only a joining client applies
+    if (!g_joinApplyArmed.exchange(false, std::memory_order_acq_rel)) return;  // not a join's load
+    g_profileApplied = false;
     if (!g_hasPendingApply.load(std::memory_order_acquire)) {
-        UE_LOGW("player_inventory: SaveObjectReady but no apply blob arrived yet -- leaving the "
-                "loaded inventory (NOT wiping). The join boot should have waited for it.");
+        const bool emptied = ue_wrap::inventory::ApplyToSaveObject(
+            saveSlotObject, ue_wrap::inventory::PlayerInventory{});
+        UE_LOGE("player_inventory[client]: SaveObjectReady with no profile from the host -- %s; "
+                "this session plays empty-handed and reports nothing back, the profile on the "
+                "host is untouched", emptied ? "emptied the host's items out of the save object"
+                                             : "and the save object could not be written");
         return;
     }
     if (ue_wrap::inventory::ApplyToSaveObject(saveSlotObject, g_pendingApply)) {
-        UE_LOGI("player_inventory[client]: applied per-player inventory to save object %p "
-                "(inventory=%zu equip=%zu hold=%zu) -- RETIRES the host-save inheritance",
+        g_profileApplied = true;
+        UE_LOGI("player_inventory[client]: applied per-player profile to save object %p "
+                "(carried=%zu equip=%zu hold=%zu)",
                 saveSlotObject, g_pendingApply.inventory.size(),
                 g_pendingApply.equipment.size(), g_pendingApply.hold.size());
     } else {
-        UE_LOGE("player_inventory[client]: ApplyToSaveObject FAILED on %p -- the client will "
-                "fall back to the inventory its own save loaded (no wipe)", saveSlotObject);
+        UE_LOGE("player_inventory[client]: ApplyToSaveObject FAILED on %p -- the world comes up "
+                "with the host's items and the stream stays shut", saveSlotObject);
     }
 }
 
@@ -448,31 +466,57 @@ int StarterIndex(const std::wstring& className) {
 // with no hardcoded struct layout and none of the host's other items. The worn-equipment
 // array shape is preserved (non-starter and duplicate slots cleared) so the kit keeps the
 // New Game layout. False if no starter item is present (the host dropped them, or the save
-// slot is unresolvable), and the caller sends empty. Game thread. The copied records carry
-// the host's item keys, benign while the items are held or worn inventory data rather than
-// world actors; only a simultaneous drop of the same starter item by several peers would
-// collide on the world-prop key.
+// slot is unresolvable), and the caller sends empty. Game thread. Every copied record gets a
+// fresh key: the game's key index holds one object per key (lib::assignKey overwrites), so a copy
+// under its source's key aliases the host's item the moment either one is dropped into the world.
 bool BuildFirstJoinStarterKit(ue_wrap::inventory::PlayerInventory& out) {
     ue_wrap::inventory::PlayerInventory host;
     if (!ue_wrap::inventory::ReadAll(host)) return false;
     bool got[3] = {false, false, false};
     for (const auto& r : host.inventory) {
         const int k = StarterIndex(r.className);
-        if (k >= 0 && !got[k]) { got[k] = true; out.inventory.push_back(r); }
+        if (k >= 0 && !got[k]) {
+            got[k] = true;
+            out.inventory.push_back(r);
+            out.inventory.back().key = coop::prop_synth_key::RandomKeyString();
+        }
     }
+    auto rekey = [](ue_wrap::inventory::EquipRecord& e) {
+        e.propKey = coop::prop_synth_key::RandomKeyString();
+        e.data.key = e.propKey;
+    };
     out.equipment = host.equipment;  // keep the worn-slot array shape
     for (auto& e : out.equipment) {
         const int k = StarterIndex(e.data.className);
         if (k < 0 || got[k]) e = ue_wrap::inventory::EquipRecord{};  // clear non-starter / dup slot
-        else got[k] = true;
+        else { got[k] = true; rekey(e); }
     }
     out.hold = host.hold;
     for (auto& e : out.hold) {
         const int k = StarterIndex(e.data.className);
         if (k < 0 || got[k]) e = ue_wrap::inventory::EquipRecord{};
-        else got[k] = true;
+        else { got[k] = true; rekey(e); }
     }
     return got[0] || got[1] || got[2];
+}
+
+// A stored profile from before the lane moved onto the carried store. Its equipment and hold are
+// the player's own; its inventory third is the projection, so it goes. What stays is re-keyed:
+// those files' starter items were copied under the HOST's keys. False if the blob does not parse.
+bool LiftProjectionProfile(std::vector<uint8_t>& blob) {
+    ue_wrap::inventory::PlayerInventory inv;
+    uint8_t ver = 0;
+    if (!coop::inventory_wire::Deserialize(blob, inv, &ver)) return false;
+    if (ver == coop::inventory_wire::kVersion) return true;
+    inv.inventory.clear();
+    for (auto* arr : {&inv.equipment, &inv.hold})
+        for (auto& e : *arr)
+            if (!e.data.className.empty()) {
+                e.propKey = coop::prop_synth_key::RandomKeyString();
+                e.data.key = e.propKey;
+            }
+    blob = coop::inventory_wire::Serialize(inv);
+    return true;
 }
 
 bool SendInventoryToSlot(int peerSlot) {
@@ -486,7 +530,7 @@ bool SendInventoryToSlot(int peerSlot) {
         return false;  // not sent -> caller does not latch; retries when the GUID lands
     }
     std::vector<uint8_t> blob;
-    if (!ReadBlobFile(guid, blob)) {
+    if (!ReadBlobFile(guid, blob) || !LiftProjectionProfile(blob)) {
         // First join (no persisted file, or corrupt with no .bak): seed the starter kit so the
         // player is not dropped into the host's world empty-handed (a loaded coop save runs no
         // begin-equipment, so they would be). Read off the host's own live inventory, filtered to
@@ -517,6 +561,8 @@ bool SendInventoryToSlot(int peerSlot) {
 
 bool HasPendingApply() { return g_hasPendingApply.load(std::memory_order_acquire); }
 
+void BeginJoinApply() { g_joinApplyArmed.store(true, std::memory_order_release); }
+
 void OnDisconnectForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
@@ -538,6 +584,8 @@ void OnDisconnect() {
     g_lastSentHash = 0;
     g_lastPoll = Clock::time_point{};
     g_hasPendingApply.store(false, std::memory_order_release);
+    g_joinApplyArmed.store(false, std::memory_order_release);
+    g_profileApplied = false;
     g_pendingApply = ue_wrap::inventory::PlayerInventory{};
     g_clientAssembler.Clear();
 }
@@ -546,37 +594,6 @@ void FlushAllToDisk() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlot(slot);
-}
-
-void EnsurePlayerFile(int peerSlot) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host) return;  // the host owns the per-player files
-    const std::string& guid = coop::player_handshake::GuidForSlot(peerSlot);
-    if (guid.empty()) {
-        UE_LOGI("player_inventory: slot %d has no proved GUID yet -- "
-                "no file this edge", peerSlot);
-        return;
-    }
-    const fs::path file = PlayerFilePath(guid);
-    if (file.empty()) {
-        UE_LOGW("player_inventory: cannot build path for slot %d guid=%s "
-                "(SaveGamesDir / HostSlot empty) -- skipping", peerSlot, guid.c_str());
-        return;
-    }
-    std::error_code ec;
-    if (fs::exists(file, ec)) {
-        UE_LOGI("player_inventory: slot %d guid=%s -- file already present ('%ls')",
-                peerSlot, guid.c_str(), file.c_str());
-        return;
-    }
-    // First join for this GUID on this save: write an empty-inventory file in the real magic and
-    // FNV format, so the on-disk format is uniform. The client's inventory stream overwrites it a
-    // second later if it has items.
-    const std::vector<uint8_t> empty = coop::inventory_wire::Serialize(ue_wrap::inventory::PlayerInventory{});
-    const std::string nick = NickForJson(coop::player_handshake::NicknameForSlot(peerSlot));
-    if (WriteBlobFile(file, empty, nick))
-        UE_LOGI("player_inventory: created empty inventory file for slot %d guid=%s ('%ls')",
-                peerSlot, guid.c_str(), file.c_str());
 }
 
 }  // namespace coop::player_inventory_sync

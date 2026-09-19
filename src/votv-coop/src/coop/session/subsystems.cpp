@@ -312,7 +312,6 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
-    coop::player_inventory_sync::EnsurePlayerFile(slot);  // ensure this peer's per-save inventory file exists
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
     // joiner loaded its world, so the blob would miss the pre-materialise hook; the host tick's
     // connect-edge detector drives it pre-world instead. No join teleport here either: the
