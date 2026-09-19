@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"  // FVector (the hard throw's launch direction)
+
 #include <cstdint>
 
 namespace coop::net { class Session; }
@@ -63,5 +65,9 @@ bool DebugSendGrabIntent(uint32_t eid);
 // InpActEvt_use toggle cannot be driven. No-op if not a running client. Returns true iff sent.
 // Game thread.
 bool DebugSendThrowIntent(uint32_t eid);
+
+// TEST-ONLY: the hard throw, the LMB shape: a ThrowIntent{eid, kHardThrow, dir} from THIS client,
+// so a drill can put a clump into a real arc. `dir` is the unit launch direction. Game thread.
+bool DebugSendHardThrowIntent(uint32_t eid, const ue_wrap::FVector& dir);
 
 }  // namespace coop::trash_collect_sync

@@ -1,12 +1,14 @@
 // harness/autotest/autotest_grabintent.cpp -- the synthetic grab-intent test
 // (VOTVCOOP_RUN_GRAB_INTENT_TEST=1): a client drives the trash carry round trip through the game's
 // own E-press, and both logs carry the verdict (tools/mp.py trashcarry reads them).
+// VOTVCOOP_GRAB_INTENT_HARD_THROW=1 adds a second leg, a throw up and away, and the client samples
+// what its own mirror of the clump does in the air.
 
 #include "harness/autotest.h"
 
 #include "coop/player/players_registry.h"
 #include "coop/props/remote_prop.h"
-#include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent, DebugSendThrowIntent
+#include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent, DebugSendThrowIntent, DebugSendHardThrowIntent
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -187,8 +189,49 @@ void RunGrabIntentTest() {
         d.store(1);
     });
 
-    // 6. Hold about 8 s for the flight and the re-pile.
-    ::Sleep(8000);
+    // 5a. The hard throw (VOTVCOOP_GRAB_INTENT_HARD_THROW=1): the soft release above is a drop, and
+    // a drop has no arc to look at. Re-grab the landed pile and throw it up and away, the LMB shape.
+    size_t hardLen = 0; char hardBuf[8] = {};
+    const bool hardThrow = ::getenv_s(&hardLen, hardBuf, sizeof(hardBuf), "VOTVCOOP_GRAB_INTENT_HARD_THROW") == 0 &&
+                           hardLen > 1 && hardBuf[0] == '1';
+    if (hardThrow) {
+        ::Sleep(4000);   // the drop lands and converts back to a pile
+        UE_LOGI("grab_intent_test: >>> HARD-THROW leg -- re-grab eid=%u, carry 2 s, throw up and away <<<", pk->eid);
+        RunGT([pk](std::atomic<int>& d) { coop::trash_collect_sync::DebugSendGrabIntent(pk->eid); d.store(1); });
+        ::Sleep(2000);
+        RunGT([pk](std::atomic<int>& d) {
+            const ue_wrap::FVector fwd = E::GetActorForwardVector(pk->player);
+            const float k = 0.7071f;   // 45 degrees up along the facing
+            const ue_wrap::FVector dir{ fwd.X * k, fwd.Y * k, k };
+            const bool sent = coop::trash_collect_sync::DebugSendHardThrowIntent(pk->eid, dir);
+            UE_LOGI("grab_intent_test: >>> HARD THROW eid=%u dir=(%.2f,%.2f,%.2f) sent=%d <<<",
+                    pk->eid, dir.X, dir.Y, dir.Z, sent ? 1 : 0);
+            d.store(1);
+        });
+    }
+
+    // 6. The flight, SAMPLED on this client: what the mirror of the thrown clump does between the
+    // throw and the landing is the measurement (a frozen mirror holds one position; an arc rises
+    // and falls). 20 Hz for 4 s, then the rest of the hold for the re-pile.
+    {
+        const ULONGLONG t0 = ::GetTickCount64();
+        for (int i = 0; i < 80; ++i) {
+            RunGT([pk, t0](std::atomic<int>& d) {
+                void* m = coop::remote_prop::ResolveLiveActorByEid(static_cast<coop::element::ElementId>(pk->eid));
+                if (m) {
+                    const ue_wrap::FVector at = E::GetActorLocation(m);
+                    UE_LOGI("grab_intent_test: FLIGHT-SAMPLE t=%llu ms eid=%u mirror=%p class='%ls' pos=(%.1f,%.1f,%.1f)",
+                            ::GetTickCount64() - t0, pk->eid, m, R::ClassNameOf(m).c_str(), at.X, at.Y, at.Z);
+                } else {
+                    UE_LOGI("grab_intent_test: FLIGHT-SAMPLE t=%llu ms eid=%u mirror=<none>",
+                            ::GetTickCount64() - t0, pk->eid);
+                }
+                d.store(1);
+            });
+            ::Sleep(50);
+        }
+    }
+    ::Sleep(4000);
     UE_LOGI("grab_intent_test: CLIENT done eid=%u -- the verdict is the round trip's own markers in both logs: "
             "the client's recognition and intents, the host's grab, carry and release, and the client's land. "
             "useReal=%d", pk->eid, useReal ? 1 : 0);

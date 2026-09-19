@@ -406,4 +406,14 @@ bool DebugSendThrowIntent(uint32_t eid) {
     return true;
 }
 
+bool DebugSendHardThrowIntent(uint32_t eid, const ue_wrap::FVector& dir) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Client) {
+        UE_LOGW("trash_collect: DebugSendHardThrowIntent eid=%u -- no running client session", eid);
+        return false;
+    }
+    coop::trash_channel::SendThrowIntent(*s, eid, coop::net::throw_mode::kHardThrow, dir);
+    return true;
+}
+
 }  // namespace coop::trash_collect_sync
