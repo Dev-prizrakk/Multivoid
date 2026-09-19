@@ -91,6 +91,15 @@ void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal);
 // probe). In proc_walkgrab.cpp.
 void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal);
 
+// Pick the chipPile a walking player can actually get to: among the live piles `minCm`..`maxCm`
+// from `player`, the one with the SHORTEST NavMesh route whose last point lies within grab distance
+// of the pile (a pile on a shelf or behind a wall has a route that ends short or winds far around).
+// Fills goal.targetActor / goal.targetPos; false when the save has no such pile. Every drill that
+// needs a player AT a pile uses this and then walks -- none computes a standoff and teleports to
+// it: a computed point can sit inside geometry, and the game's anti-noclip then takes the player
+// out of the world. Game thread.
+bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal);
+
 // True iff the last run's ClearHand had to use the effect-seam release because the input-seam
 // drop was MEASURED inert -- i.e. the drop was NOT input-seam-faithful (surfaced in the verdict).
 bool DidClearHandUseEffectFallback();

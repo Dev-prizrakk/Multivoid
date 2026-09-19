@@ -6,6 +6,7 @@
 
 #include "harness/autotest.h"
 
+#include "coop/dev/director/director.h"   // PickReachablePile, AddWalkToProcesses
 #include "coop/player/players_registry.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_collect_sync.h"   // DebugSendGrabIntent, DebugSendThrowIntent, DebugSendHardThrowIntent
@@ -25,9 +26,6 @@
 
 namespace harness::autotest {
 namespace {
-
-// The pile finder takes a radius; this scenario wants the nearest one in the level.
-constexpr float kAnywhereCm = 1.0e6f;
 
 namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
@@ -76,84 +74,78 @@ void RunGrabIntentTest() {
     ::Sleep(70000);
 
     struct Pick { void* player = nullptr; void* pile = nullptr; uint32_t eid = 0; ue_wrap::FVector pilePos{};
-                  float dist = 0.f; void* useFn = nullptr; int32_t useFrame = 0; };
-    auto pk = std::make_shared<Pick>();
-    if (RunGT([pk](std::atomic<int>& d) {
+                  uint32_t farEid = 0; float farCm = 0.f; void* useFn = nullptr; int32_t useFrame = 0; };
+    auto pk   = std::make_shared<Pick>();
+    auto goal = std::make_shared<coop::director::DirectorGoal>();
+    if (RunGT([pk, goal](std::atomic<int>& d) {
             void* p = coop::players::Registry::Get().Local();
             if (!p || !R::IsLive(p) || !E::GetController(p)) {
                 UE_LOGW("grab_intent_test: no possessed local player"); d.store(2); return; }
-            float dist = -1.f;
-            void* pile = ue_wrap::prop::FindNearestChipPile(E::GetActorLocation(p), kAnywhereCm, &dist);
-            if (!pile) { UE_LOGW("grab_intent_test: no mirrored pile to grab yet"); d.store(2); return; }
+            // The pile the client can WALK to: the director's pick, by NavMesh route. The nearest
+            // pile in a straight line may sit behind a wall or on a shelf.
+            if (!coop::director::PickReachablePile(p, 0.f, 5000.f, *goal)) {
+                UE_LOGW("grab_intent_test: no nav-reachable mirrored pile"); d.store(2); return; }
+            void* pile = goal->targetActor;
             coop::element::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(pile);
             if (eid == coop::element::kInvalidId) {
-                UE_LOGW("grab_intent_test: the nearest pile %p has no resolvable eid", pile); d.store(2); return; }
+                UE_LOGW("grab_intent_test: the picked pile %p has no resolvable eid", pile); d.store(2); return; }
+            // The refusal leg's target: the FARTHEST pile with an eid. Nobody moves for it.
+            const ue_wrap::FVector at = E::GetActorLocation(p);
+            for (void* o : R::FindObjectsByClass(L"actorChipPile_C")) {
+                if (!o || !R::IsLive(o) || o == pile) continue;
+                const ue_wrap::FVector op = E::GetActorLocation(o);
+                const float dx = op.X - at.X, dy = op.Y - at.Y, dz = op.Z - at.Z;
+                const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (cm <= pk->farCm) continue;
+                const coop::element::ElementId fe = coop::remote_prop::ResolveMirrorEidByActor(o);
+                if (fe == coop::element::kInvalidId) continue;
+                pk->farCm = cm; pk->farEid = static_cast<uint32_t>(fe);
+            }
             // The E-press UFunction, so the real recognition path runs rather than only the debug
             // bypass.
             void* cls = R::FindClass(P::name::MainPlayerClass);
             void* fn  = cls ? R::FindFunction(cls, P::name::MainPlayerUseInputEventFn) : nullptr;
             pk->player = p; pk->pile = pile; pk->eid = static_cast<uint32_t>(eid);
-            pk->pilePos = E::GetActorLocation(pile); pk->dist = dist;
+            pk->pilePos = goal->targetPos;
             pk->useFn = fn; pk->useFrame = fn ? R::FunctionFrameSize(fn) : 0;
-            UE_LOGI("grab_intent_test: picked pile=%p eid=%u pos=(%.0f,%.0f,%.0f) dist=%.0fcm useFn=%p",
-                    pile, pk->eid, pk->pilePos.X, pk->pilePos.Y, pk->pilePos.Z, dist, fn);
+            UE_LOGI("grab_intent_test: picked pile=%p eid=%u pos=(%.0f,%.0f,%.0f) useFn=%p; far pile eid=%u at %.0f cm",
+                    pile, pk->eid, pk->pilePos.X, pk->pilePos.Y, pk->pilePos.Z, fn, pk->farEid, pk->farCm);
             d.store(1);
         }) != 1) { UE_LOGW("grab_intent_test: could not pick a pile -- aborting"); return; }
 
-    // 1a. The refusal leg: stand 25 m from the pile, let the pose stream carry the puppet there,
-    // and send the grab. The host must refuse it for reach AND answer -- its DENIED line, then this
-    // client's own 'grab REFUSED ... pending grab cleared'. Step 2 brings the client back.
-    RunGT([pk](std::atomic<int>& d) {
-        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
-        float ax = at.X - pk->pilePos.X, ay = at.Y - pk->pilePos.Y;
-        const float h = std::sqrt(ax * ax + ay * ay);
-        if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
-        const ue_wrap::FVector away{ pk->pilePos.X + ax * 2500.f, pk->pilePos.Y + ay * 2500.f, pk->pilePos.Z + 90.f };
-        E::TeleportTo(pk->player, away, LookAt(away, pk->pilePos));
-        d.store(1);
-    });
-    ::Sleep(1500);
-    RunGT([pk](std::atomic<int>& d) {
-        // The distance is READ, not assumed: the engine may refuse a teleport destination, and a
-        // far grab sent from beside the pile would be performed and start the drill mid-carry.
-        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
-        const float dx = at.X - pk->pilePos.X, dy = at.Y - pk->pilePos.Y, dz = at.Z - pk->pilePos.Z;
-        const float farCm = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (farCm < 2000.f) {
-            UE_LOGW("grab_intent_test: refusal leg SKIPPED -- the far teleport left the client %.0f cm from the pile", farCm);
+    // 1a. The refusal leg: a grab for a pile that is already far away, sent from where the client
+    // stands. The host must refuse it for reach AND answer -- its DENIED line, then this client's
+    // own 'grab REFUSED ... pending grab cleared'.
+    if (pk->farEid != 0 && pk->farCm > 3000.f) {
+        RunGT([pk](std::atomic<int>& d) {
+            const bool sent = coop::trash_collect_sync::DebugSendGrabIntent(pk->farEid);
+            UE_LOGI("grab_intent_test: >>> FAR GRAB eid=%u from %.0f cm sent=%d -- the host must refuse it and say so <<<",
+                    pk->farEid, pk->farCm, sent ? 1 : 0);
             d.store(1);
+        });
+        ::Sleep(1500);
+    } else {
+        UE_LOGW("grab_intent_test: refusal leg SKIPPED -- no mirrored pile farther than 3000 cm (farthest %.0f)", pk->farCm);
+    }
+
+    // 2. WALK to the pile: the director's route over the NavMesh, driven at the input seam, so the
+    // client arrives where a player can stand and the puppet on the host arrives with it.
+    {
+        goal->reachCm = 140.f;   // inside the game's own interaction trace
+        coop::director::ControlManager mgr;
+        coop::director::AddWalkToProcesses(mgr, *goal);
+        mgr.Run(*goal, /*maxSeconds=*/90);
+        if (!goal->reached) {
+            UE_LOGW("grab_intent_test: the walk did not reach the pile (%s) -- aborting", goal->failReason);
             return;
         }
-        const bool sent = coop::trash_collect_sync::DebugSendGrabIntent(pk->eid);
-        UE_LOGI("grab_intent_test: >>> FAR GRAB eid=%u from %.0f cm sent=%d -- the host must refuse it and say so <<<",
-                pk->eid, farCm, sent ? 1 : 0);
-        d.store(1);
-    });
-    ::Sleep(1500);
-
-    // 2. Teleport the client to a standoff facing the pile, so the game's own look-at trace can hit
-    // it and the puppet stands at the pile.
-    RunGT([pk](std::atomic<int>& d) {
-        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
-        float ax = at.X - pk->pilePos.X, ay = at.Y - pk->pilePos.Y;
-        const float h = std::sqrt(ax * ax + ay * ay);
-        if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
-        // Inside arm's reach: the recognition is the game's own interaction trace now, and that
-        // trace is short. A camera-ray cone reached 400 cm and let this standoff be generous; the
-        // trace does not, so the drill stands where a player stands to pick something up.
-        const ue_wrap::FVector stand{ pk->pilePos.X + ax * 120.f, pk->pilePos.Y + ay * 120.f, pk->pilePos.Z + 90.f };
-        E::TeleportTo(pk->player, stand, LookAt(stand, pk->pilePos));
-        d.store(1);
-    });
-    ::Sleep(500);
+    }
     // Aim from the CAMERA, not from the capsule: the camera sits a head above the actor origin, so
-    // a rotation computed at the origin points over the pile, and the trace that used to be a
-    // forgiving cone now misses.
+    // a rotation computed at the origin points over the pile, and the trace misses.
     RunGT([pk](std::atomic<int>& d) {
         const ue_wrap::FRotator face = LookAt(E::GetCameraLocation(), pk->pilePos);
         E::SetControlRotation(E::GetController(pk->player), face);
-        UE_LOGI("grab_intent_test: client at a 120 cm standoff, aimed from the camera at the pile; "
-                "the look-at grab comes next");
+        UE_LOGI("grab_intent_test: client walked to the pile and aimed from the camera; the look-at grab comes next");
         d.store(1);
     });
     ::Sleep(1500);   // let the view camera settle so the game's look-at trace names the pile
