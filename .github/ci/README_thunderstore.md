@@ -61,8 +61,9 @@ the mod get credited in the project's public credit ledger.
 
 ## Credits
 
-Multivoid is built on other people's work. Several of its networking shapes follow design that
-**Moddy** publishes for **Relay**, a Blueprint networking API for Voices of the Void:
+Multivoid is its own codebase, and it owes ideas to other people's published work. Several of its
+networking shapes follow design that **Moddy** publishes for **Relay**, a Blueprint networking
+API for Voices of the Void:
 [Relay on Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/) ·
 [Relay on GitHub](https://github.com/modestimpala/Relay). Everyone whose code, reports or review
 changed the mod is in the
