@@ -1,24 +1,17 @@
 // coop/props/pile_look.h -- the host's look of a chip pile, on every peer.
 //
 // The mesh a player sees on a pile is a child of the pile's root, and the game's init() turns and
-// scales it at random on every construction, a save load included (ue_wrap/actors/chip_pile.h). Two
-// peers that load the same save therefore draw two different looks for the same pile. The host's
-// draw is the authority: it rides every expression of a pile (PropSpawn, a kToPile PropConvert) as
-// a WirePileLook, and a client gives it to the actor that expresses that eid.
+// scales it at random on every construction, a save load included (ue_wrap/actors/chip_pile.h), so
+// two peers that load one save draw two looks for one pile. The host's draw is the authority: it
+// rides every expression of a pile (PropSpawn, a kToPile PropConvert) as a WirePileLook.
 //
-// A client binds an actor to a host eid at many moments -- the ordinal bind at load, the join
-// bracket's own-save bind, a materialised mirror, the quiescence re-bind after GC churn -- and the
-// look can arrive before or after any of them. So the look is kept per eid: whichever of the two
-// (the look, the bound actor) arrives second completes the pair. The bind seam is
-// remote_prop::RegisterPropMirror, the one entry every bind goes through. Mid-join needs nothing of
-// its own: the join snapshot expresses every pile, and each expression carries the look.
-//
-// MTA keeps such state ON the element (object scale: Server/.../packets/CEntityAddPacket.cpp:267-282
-// on the add, Client/.../rpc/CObjectRPCs.cpp:88 on a change). The same two carriers here (PropSpawn,
-// PropConvert); the side map per eid is the divergence, because a look can arrive before its
-// element exists (a pending own-save bind).
-//
-// Game thread only.
+// A client binds an actor to a host eid at many moments (the join bracket's own-save bind, a
+// materialised mirror, the quiescence re-bind after GC churn) and the look can arrive before or
+// after any of them, so it is kept per eid: whichever of the two arrives second completes the
+// pair, at remote_prop::RegisterPropMirror, the one entry every bind goes through. Mid-join needs
+// nothing of its own: the snapshot expresses every pile, and each expression carries the look.
+// MTA keeps such state ON the element (an object's scale: CEntityAddPacket, CObjectRPCs); the side
+// map per eid is the divergence, because a look can arrive before its element exists. Game thread.
 
 #pragma once
 

@@ -7,6 +7,8 @@
 
 #include <windows.h>
 
+#include "harness/autotest_trash.h"   // the trash carry drills
+
 namespace harness::autotest {
 
 // The one role predicate for every routine's host/client branch: the registry's resolve of
@@ -32,34 +34,11 @@ DWORD WINAPI GrabTestThread(LPVOID arg);
 void RunAutonomousClumpTest();
 DWORD WINAPI ClumpTestThread(LPVOID arg);
 
-// The chipPile grab test, host-driven: the host is teleported to a pile, aimed until the game's
-// own trace names it, and InpActEvt_use fired through the same edge a real press hits;
-// holding_actor is measured and a throw tests the re-pile. It produces the log to read, never a
-// pass by itself. Env VOTVCOOP_RUN_CHIPPILE_TEST=1.
-void RunAutonomousChipPileTest();
-DWORD WINAPI ChipPileTestThread(LPVOID arg);
-
 // The puppet-grab probe, host only: with an unpossessed mainPlayer_C as the player, does the
 // puppet hold the spawned clump, and does the per-tick hand maintenance run on it or does the
 // clump float at the spawn spot. Env VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1.
 void RunPuppetGrabProbe();
 DWORD WINAPI PuppetGrabProbeThread(LPVOID arg);
-
-// The synthetic GrabIntent test: the client faces a mirrored pile, presses use, carries and
-// releases; the host validates, grabs on the puppet, streams the carry and lands it. Env
-// VOTVCOOP_RUN_GRAB_INTENT_TEST=1.
-void RunGrabIntentTest();
-DWORD WINAPI GrabIntentTestThread(LPVOID arg);
-
-// The host-throw scenario (VOTVCOOP_RUN_HOSTTHROW=1): the host walks to a pile with the bot
-// director, grabs and throws it; the client samples its own mirror of the clump.
-void RunHostThrowScenario();
-DWORD WINAPI HostThrowThread(LPVOID arg);
-
-// The pile-look census (VOTVCOOP_RUN_PILELOOK=1): each peer logs every chip pile it can name by
-// eid with its visible mesh rotation; the driver joins the two logs. Read-only.
-void RunPileLookScenario();
-DWORD WINAPI PileLookThread(LPVOID arg);
 
 // The trash morph gate, red and green in one run: each peer calls the guarded verb, toClump, on
 // the nearest chip pile. The host's pile morphs, proving the verb does what is being refused; the

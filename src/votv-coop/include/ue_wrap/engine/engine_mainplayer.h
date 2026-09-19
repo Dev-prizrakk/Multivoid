@@ -37,7 +37,7 @@ bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& 
 // Where a mainPlayer_C's first-person camera is, a puppet's included: the origin of the native
 // hold point (mainPlayer: grabHandle->SetTargetLocationAndRotation(Camera location + Camera forward
 // * grabLen, grabrot rotation)). The pawn's `grabrot` arrow is NOT offered beside it: on a puppet
-// it reads zero whatever the puppet does (measured 2026-09-19), so a puppet's carry composes the
+// it reads zero whatever the puppet does (measured), so a puppet's carry composes the
 // hold's rotation itself. False, `out` untouched, on a dead pawn or an unresolved camera. One
 // reflected call. Game thread.
 bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out);

@@ -1,6 +1,6 @@
 // harness/autotest/autotest_grabintent.cpp -- the synthetic grab-intent test
 // (VOTVCOOP_RUN_GRAB_INTENT_TEST=1): a client drives the trash carry round trip through the game's
-// own E-press, and both logs carry the verdict (tools/mp.py trashcarry reads them).
+// own E-press, and both logs carry the verdict (the trashcarry driver reads them).
 // VOTVCOOP_GRAB_INTENT_HARD_THROW=1 adds a second leg, a throw up and away, and the client samples
 // what its own mirror of the clump does in the air.
 

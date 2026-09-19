@@ -397,7 +397,7 @@ function New-PackageManifest {
     # headroom on a string that INTERPOLATES $GameTarget, so a future "0.9.10" (one char
     # longer than "0.9.0n") would fire the throw below during a release, which is the
     # worst possible moment to discover a copy limit.
-    # THE STATUS LEADS (2026-09-19): the gallery and the r2modman list show the START of
+    # THE STATUS LEADS: the gallery and the r2modman list show the START of
     # this string, and field reports kept being filed against limits a reader never saw,
     # so "in-progress" and the early-phase line now come before what the mod does.
     # Measured 239 of 250 with "0.9.0n".
