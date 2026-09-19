@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 163;
+inline constexpr uint16_t kProtocolVersion = 164;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1148,6 +1148,17 @@ static_assert(sizeof(PropDriveEndPayload) <= 256 - 20 - 8,
 // per-class save scalar. Inventory contents never cross; only the world identity does.
 //
 // physFlags: propspawn_flags.
+// The look of a chip pile: the transform of the mesh a player sees, relative to the pile's root.
+// The game's init() gives that mesh a random rotation and scale on every construction, a save load
+// included, and saves neither, so every process that constructs a pile draws its own; the host's
+// draw is the one every peer shows. Angles are 360/65536 degree steps, scales 1/4096 steps (0..16).
+// sclX == 0 means "no look": the sender is not a pile, or could not read its mesh.
+struct WirePileLook {
+    int16_t  relPitch, relYaw, relRoll;   // 6
+    uint16_t sclX, sclY, sclZ;            // 6
+};
+static_assert(sizeof(WirePileLook) == 12, "WirePileLook must be 12 bytes");
+
 struct PropSpawnPayload {
     WireClassName className;       // 64 -- "Aprop_equipment_flashlight_C" etc.
     WireKey       key;             // 32 -- the persistent cross-peer Key
@@ -1172,8 +1183,9 @@ struct PropSpawnPayload {
     // this rather than the current pose, so a pile the host moved during the join window is
     // reconciled instead of duplicated. Valid iff hasMatchPos.
     float         matchX, matchY, matchZ;   // 12 -- save-time position (world cm); valid iff hasMatchPos
+    WirePileLook  look;                     // 12 -- a chip pile's visible mesh; absent (sclX 0) for anything else
 };
-static_assert(sizeof(PropSpawnPayload) == 208, "PropSpawnPayload must be 208 bytes");
+static_assert(sizeof(PropSpawnPayload) == 220, "PropSpawnPayload must be 220 bytes");
 static_assert(sizeof(PropSpawnPayload) <= 256 - 20 - 8,
               "PropSpawnPayload must fit in one reliable datagram");
 
@@ -2169,8 +2181,9 @@ struct PropConvertPayload {
     uint8_t hasMatchPos;                  // 1 => matchX/Y/Z carry the pile's pre-grab save-time position (a landing after an
                                           // in-window grab), so the client retires its stale native at the quiescence sweep
     float   matchX, matchY, matchZ;       // the pre-grab position (world cm); valid iff hasMatchPos and kind is kToPile
+    WirePileLook look;                    // kToPile: the landed pile's visible mesh; absent (sclX 0) on kToClump
 };
-static_assert(sizeof(PropConvertPayload) == 124, "PropConvertPayload must be 124 bytes");
+static_assert(sizeof(PropConvertPayload) == 136, "PropConvertPayload must be 136 bytes");
 
 // A grab intent (GrabIntent): the eid of the mirrored pile the client wants; intent only, no state.
 struct GrabIntentPayload {

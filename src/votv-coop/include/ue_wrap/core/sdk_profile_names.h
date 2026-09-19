@@ -300,6 +300,9 @@ inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
 // (Engine.hpp:17941/17950).
 inline constexpr const wchar_t* GetComponentRotationFn = L"K2_GetComponentRotation";
 inline constexpr const wchar_t* SetWorldRotationFn = L"K2_SetWorldRotation";
+inline constexpr const wchar_t* SetRelativeScale3DFn = L"SetRelativeScale3D";
+inline constexpr const wchar_t* RelativeRotationProp = L"RelativeRotation";
+inline constexpr const wchar_t* RelativeScale3DProp = L"RelativeScale3D";
 
 // Component destruction (UActorComponent::K2_DestroyComponent): removes the local-only systems a
 // remote pawn must not own (its PostProcessComponent grades the local screen).

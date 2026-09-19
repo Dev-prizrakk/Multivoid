@@ -101,6 +101,7 @@
 #include "coop/interactables/window_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/interactables/garbage_sync.h"
+#include "coop/props/pile_look.h"
 #include "coop/props/trash_channel.h"
 #include "coop/player/local_streams.h"  // LastHeldActor
 #include "coop/player/puppet_carry_drive.h"
@@ -396,6 +397,7 @@ DisconnectStats DisconnectAll() {
     // chain. Retiring them here un-roots, destroys and evicts each drive, so ForceRelease sees no
     // live mirror and no stale drive entry.
     coop::trash_mirror::OnDisconnect();
+    coop::pile_look::OnDisconnect();
     coop::remote_prop::ForceRelease();
     // A disconnect mid-snapshot drops the armed claim set (dangling actor pointers must not survive
     // into the next session); no sweep.

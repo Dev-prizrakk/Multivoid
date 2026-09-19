@@ -11,6 +11,7 @@
 #include "coop/net/session.h"
 #include "coop/element/registry.h"    // EidForActor (birth prune) + Get(eid) (carry termination)
 #include "coop/player/puppet_carry_drive.h"  // OnTakenOver: a taker ends a client's carry drive
+#include "coop/props/pile_look.h"
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
 #include "coop/save/save_transfer.h"  // the save-time pile transform for a land
 #include "ue_wrap/engine/engine.h"      // the per-form scale and the transform and velocity reads
@@ -133,6 +134,18 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     // fan-out and the eid is unique. The client's convert then arms a pending save-time twin so the
     // quiescence sweep retires its stale native at the old position. A to-clump carries no key,
     // since there is no native twin at that edge.
+    // A land carries the look the game just drew for the new pile (coop/props/pile_look.h). E's
+    // actor is that pile by now: the re-pile thunk re-pointed the element in the tick it spawned.
+    if (kind == coop::net::propconvert_kind::kToPile) {
+        coop::element::Element* el = coop::element::Registry::Get().Get(E);
+        void* pile = el ? el->GetActor() : nullptr;
+        if (pile && R::IsLiveByIndex(pile, el->GetInternalIdx())) {
+            // Absent when E is a clump again by the commit (the fallback land below): that land
+            // names no pile, and the next one carries the look.
+            p.look = coop::pile_look::Capture(pile);
+            if (p.look.sclX != 0) coop::pile_look::LogLandLook("HOST", static_cast<uint32_t>(E), pile);
+        }
+    }
     p.hasMatchPos = 0;
     if (kind == coop::net::propconvert_kind::kToPile && static_cast<uint32_t>(E) != 0u) {
         ue_wrap::FVector sv;
@@ -401,11 +414,9 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
             }
             if (reread) {
                 cloc   = ue_wrap::engine::GetActorLocation(ls.pileActor);
-                // The settled pile's visual orientation is on its mesh component's relative
-                // rotation (a random roll), not the actor root, so the mesh's world rotation is
-                // captured for the mirror to reproduce it; otherwise every re-piled mirror
-                // looks identical.
-                crot   = ue_wrap::engine::GetVisibleMeshWorldRotation(ls.pileActor);
+                // The root's rotation. What a player sees is the child mesh's random turn on top
+                // of it, which BroadcastConvert sends as the pile's look.
+                crot   = ue_wrap::engine::GetActorRotation(ls.pileActor);
                 cscale = ue_wrap::engine::GetActorScale3D(ls.pileActor);
             }
             BroadcastConvert(s, E, coop::net::propconvert_kind::kToPile, cloc, crot, cscale, ls.chipType,

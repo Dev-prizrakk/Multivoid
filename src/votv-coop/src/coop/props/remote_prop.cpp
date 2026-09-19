@@ -15,6 +15,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/pile_look.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
@@ -441,6 +442,8 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         int senderSlot,
                         bool rebindInPlace) {
     coop::element::CreateOrAdoptPropMirror(eid, actor, key, cls, senderSlot, rebindInPlace);
+    // A pile bound after its look arrived takes the look here (coop/props/pile_look.h).
+    coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
 }
 
 // The eid bound to `actor` among the Prop elements: the mirror-side fallback the chipPile grab

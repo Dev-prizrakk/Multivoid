@@ -14,6 +14,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_save_data.h"
+#include "coop/props/pile_look.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf
 #include "coop/props/prop_lifecycle.h"
@@ -245,13 +246,11 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // enabled.
     coop::dev::eid_lifetime_trace::CheckWireEid(obj, static_cast<uint32_t>(eid));
     const auto loc = ue_wrap::engine::GetActorLocation(obj);
-    // A chipPile's visual variety is the StaticMesh component's relative rotation (a random roll
-    // from the construction script), not the actor root, and the trash mirror is a bare
-    // AStaticMeshActor: the visible mesh's world rotation goes on the wire, or every mirrored pile
-    // renders identically oriented. A native keyed prop keeps its actor rotation.
-    const auto rot = ue_wrap::prop::IsChipPile(obj)
-                         ? ue_wrap::engine::GetVisibleMeshWorldRotation(obj)
-                         : ue_wrap::engine::GetActorRotation(obj);
+    // The actor's rotation. A chip pile shows a child mesh the game turns and scales at random on
+    // every construction; that draw rides beside it as the pile's look (coop/props/pile_look.h),
+    // absent for everything else.
+    const auto rot = ue_wrap::engine::GetActorRotation(obj);
+    p.look = coop::pile_look::Capture(obj);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);

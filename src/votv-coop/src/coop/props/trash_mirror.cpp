@@ -8,6 +8,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"  // Registry::Get().Get(eid) -> Element (SetSaveNative)
+#include "coop/props/pile_look.h"           // Forget (a retired eid keeps no look)
 #include "coop/props/prop_echo_suppress.h"  // MarkIncomingDestroy (an authoritative destroy is not our news)
 #include "coop/props/prop_element_tracker.h"  // UnmarkKnownKeyedProp
 #include "coop/props/remote_prop.h"  // RegisterPropMirror / ClearAnyDriveFor
@@ -32,16 +33,18 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// Apply the host-authoritative APPEARANCE to a trash native: chip type, scale, and the host's
-// visible-mesh WORLD rotation. Shared by Materialize (a fresh spawn) and RepositionBoundNative
+// Apply the host-authoritative APPEARANCE to a trash native: chip type, scale, and the host
+// actor's rotation. The re-init draws a pile's child mesh a NEW random turn and scale every time
+// it runs; the host's draw replaces it at the bind or right after a re-skin
+// (coop/props/pile_look.h). Shared by Materialize (a fresh spawn) and RepositionBoundNative
 // (an already-bound native we reuse). It does NOT spawn, root, position or bind -- appearance
 // only. SetChipTypeAndRebuild covers both forms: it writes the enum byte and then calls the
 // actor's own init, which rebuilds a pile's mesh and re-materials a clump.
-void SkinTrashNative(void* native, uint8_t chipType, const ue_wrap::FRotator& meshWorldRot,
+void SkinTrashNative(void* native, uint8_t chipType, const ue_wrap::FRotator& rot,
                     const ue_wrap::FVector& scale) {
     ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
     if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f) E::SetActorScale3D(native, scale);
-    if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
+    E::SetActorRotation(native, rot);
 }
 
 // The mirrors this module MADE, with the pin each one owns. A GcPin releases from its
@@ -74,7 +77,7 @@ bool DestroyIfOurs(void* actor) {
 }  // namespace
 
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
-                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
+                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
                   const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace) {
     UE_ASSERT_GAME_THREAD("trash_mirror::Materialize");
     void* cls = className.empty() ? nullptr : R::FindClass(className.c_str());
@@ -112,12 +115,11 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     E::SetActorTickEnabled(native, false);         // scheduler kill: a clump's tick wakes its body every second
     E::SetActorSimulatePhysics(native, false);     // physics receiver: kinematic while the host drives it
     E::SetActorRootMovable(native);                // else SetActorLocation silently no-ops on a Static root
-    // Skin the host's chip type the GAME's OWN way: the chip type through the actor's own init, the
-    // scale, and the host's visible-mesh WORLD rotation written to the mesh COMPONENT rather than
-    // the root, so the two do not compose into a double rotation. The SpawnActor above already ran
-    // init once, through the construction script, with the default chip type of 0; this re-skins it
-    // to the host's variant and consumes the host's rotation on the same host-to-client edge.
-    SkinTrashNative(native, chipType, meshWorldRot, scale);
+    // Skin the host's chip type the GAME's OWN way: the chip type through the actor's own init,
+    // then the scale and the host actor's rotation. The SpawnActor above already ran init once,
+    // through the construction script, with the default chip type of 0; this re-skins it to the
+    // host's variant.
+    SkinTrashNative(native, chipType, rot, scale);
     // A clump renders in a hand: it is the carried form, driven to a puppet's hand by the pose
     // stream with no holder to be attached to, so its collision would block the very player
     // carrying it. The throw path turns physics and collision back on for the flight, and the
@@ -182,6 +184,7 @@ void Retire(coop::element::ElementId eid, bool authoritative) {
     // teardown pattern; the element destructor unregisters the mirror).
     coop::element::ElementDeleter::Get().Enqueue(
         coop::element::MirrorManager<coop::element::Prop>::Instance().Take(eid));
+    coop::pile_look::Forget(static_cast<uint32_t>(eid));
     UE_LOGI("[PILE] trash_mirror: RETIRE eid=%u actor=%p %s (%s; unbound)",
             eid, actor, authoritative ? "[the host's word]" : "[local teardown]",
             destroyed ? "destroyed" : "the client's own actor -- kept alive");
@@ -219,7 +222,7 @@ void OnDisconnect() {
 }
 
 void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,
-                           const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale) {
+                           const ue_wrap::FRotator& rot, const ue_wrap::FVector& scale) {
     if (!native) return;
     UE_ASSERT_GAME_THREAD("trash_mirror::RepositionBoundNative");
     // Reuse an already-bound native as the LAND mirror: reposition and re-skin it to the host's
@@ -228,7 +231,7 @@ void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVecto
     // result is taken as the answer -- which is what suppresses a parallel spawn.
     E::SetActorRootMovable(native);
     E::SetActorLocation(native, loc);
-    SkinTrashNative(native, chipType, meshWorldRot, scale);
+    SkinTrashNative(native, chipType, rot, scale);
 }
 
 }  // namespace coop::trash_mirror

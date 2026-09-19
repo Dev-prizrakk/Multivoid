@@ -354,17 +354,6 @@ void* GetStaticMeshComponent(void* actor) {
     return nullptr;
 }
 
-FRotator GetVisibleMeshWorldRotation(void* actor) {
-    // See engine.h: a chipPile's visible orientation lives on its StaticMesh
-    // component's relative rotation (random roll from UserConstructionScript),
-    // not the actor root. Read the mesh component's WORLD rotation so a mirror
-    // proxy reproduces the per-instance orientation. Fall back to the actor
-    // rotation if the actor owns no StaticMeshComponent.
-    void* comp = GetStaticMeshComponent(actor);
-    if (!comp) return GetActorRotation(actor);
-    return GetComponentWorldRotation(comp);
-}
-
 bool SetComponentTickEnabled(void* component, bool enabled) {
     if (!component) return false;
     static void* sFn = nullptr;

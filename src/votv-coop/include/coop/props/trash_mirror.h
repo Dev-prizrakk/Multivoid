@@ -24,25 +24,24 @@ namespace coop::trash_mirror {
 
 // Spawn the mirror of trash eid `eid` in the form `className` names -- a pile or a clump -- with
 // the inert recipe above, skin the `chipType` appearance (through the actor's own init, which
-// sets the pile's mesh and the clump's material), apply the HOST's authoritative `meshWorldRot`
-// to the visible StaticMesh COMPONENT (so the client matches the host's roll instead of the
-// actor's own random construction-script roll), apply `scale`, and -- unless `skipBind` --
-// RegisterPropMirror it at `eid` (rebindInPlace per `rebindInPlace`) and mark it save-native.
-// `meshWorldRot` is the host's captured GetVisibleMeshWorldRotation, the wire rotation. Returns
-// the actor, or nullptr on failure. Game thread.
+// sets the pile's mesh and the clump's material), give it the host actor's rotation `rot` and
+// `scale`, and -- unless `skipBind` -- RegisterPropMirror it at `eid` (rebindInPlace per
+// `rebindInPlace`) and mark it save-native. The turn a player sees on a pile is not `rot`: it is
+// the child mesh's random draw, which arrives as the pile's look and is applied at the bind
+// (coop/props/pile_look.h). Returns the actor, or nullptr on failure. Game thread.
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
-                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
+                  const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
                   const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace);
 
 // CLAIM an already-bound native pile as the LAND mirror: reposition and re-skin it to the host's
-// landed transform (loc + chipType + the host's visible-mesh `meshWorldRot` + scale). NO spawn, NO
+// landed transform (loc + chipType + the host actor's rotation `rot` + scale). NO spawn, NO
 // bind -- the native is already the element's bound mirror. This is the LAND-side symmetric half of
 // the GRAB morph hand-off: on a re-pile LAND for an eid already bound to a save-loaded native, that
 // native IS the correct resting form, so it is reused instead of spawning a parallel one the
 // duplicate-eid guard would reject, which would leave a split-tracked pair the save-time sweep
 // cannot see. Game thread.
 void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,
-                           const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale);
+                           const ue_wrap::FRotator& rot, const ue_wrap::FVector& scale);
 
 // Release the GC pin Materialize took on `actor`, if we took one. No-op for a save-loaded native
 // or a game-native we never pinned -- so a caller about to destroy an actor of unknown provenance

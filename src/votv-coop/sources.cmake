@@ -92,6 +92,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
     src/ue_wrap/actors/broom.cpp
+    src/ue_wrap/actors/chip_pile.cpp
     src/ue_wrap/engine/engine_pawn.cpp
     src/ue_wrap/engine/world_identity.cpp
     src/ue_wrap/engine/engine_nav.cpp
@@ -217,6 +218,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/world_actor_sync.cpp
     src/coop/world/world_actor_mirror.cpp
     src/coop/props/prop_echo_suppress.cpp
+    src/coop/props/pile_look.cpp
     src/coop/props/pile_spawn_bind.cpp
     src/coop/props/snapshot_census.cpp
     src/coop/props/save_identity_map.cpp

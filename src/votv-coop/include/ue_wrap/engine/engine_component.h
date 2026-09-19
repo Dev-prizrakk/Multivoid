@@ -11,11 +11,6 @@
 
 namespace ue_wrap::engine {
 
-// The world rotation of `actor`'s visible StaticMesh component, or the actor rotation if it owns
-// none. A chipPile's visual roll lives on the component (its UserConstructionScript), not the root,
-// so the host captures this and a mirror reproduces it on its own mesh component. Game thread.
-FRotator GetVisibleMeshWorldRotation(void* actor);
-
 // The UCharacterMovementComponent subobject of a Character; nullptr if none.
 void* GetCharacterMovementComponent(void* characterPawn);
 

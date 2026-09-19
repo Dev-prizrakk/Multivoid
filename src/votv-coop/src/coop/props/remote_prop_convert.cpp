@@ -13,6 +13,7 @@
 
 #include "coop/element/quiescence_drain.h"   // ArmPendingSaveTimeTwin (capture-only)
 #include "coop/props/trash_mirror.h"         // Materialize / RepositionBoundNative
+#include "coop/props/pile_look.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop_spawn.h"
@@ -60,7 +61,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
             E, ue_wrap::FVector{payload.matchX, payload.matchY, payload.matchZ}, payload.chipType);
 
     const ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
-    const ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};  // host mesh-world rotation
+    const ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};  // the host actor's rotation
     const ue_wrap::FVector  scale{payload.scaleX, payload.scaleY, payload.scaleZ};
 
     // Already in the target form. A GRAB is then idempotent -- an echo, or a grab-race loser's
@@ -79,6 +80,9 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
         coop::trash_clump_pose_stream::ClearDriveForEid(E);  // stop the carry pose stream at the land
         ClearAnyDriveFor(cur);
         coop::trash_mirror::RepositionBoundNative(cur, payload.chipType, loc, rot, scale);
+        // After the re-skin, which re-runs init() and so draws a new look: the host's replaces it.
+        coop::pile_look::OnHostLook(E, payload.look);
+        coop::pile_look::LogLandLook("CLIENT", E, cur);
         const ue_wrap::FVector got = E::GetActorLocation(cur);
         const float dx = got.X - loc.X, dy = got.Y - loc.Y, dz = got.Z - loc.Z;
         UE_LOGI("[PILE] CLIENT ToPile LAND eid=%u ctx=%u -> CLAIMED the bound native %p, repositioned to "
@@ -94,6 +98,9 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
     // names what to spawn. Materialize binds E onto it in place, which is the identity migrating
     // at the successor's BIRTH, before the predecessor dies.
     const std::wstring cls = remote_prop_spawn::ClassNameToWString(payload.pileClass);
+    // Kept before the successor exists: Materialize binds E onto it, and the bind applies the look.
+    // E's actor right now is the clump, which has no such mesh, so nothing is applied here.
+    coop::pile_look::OnHostLook(E, payload.look);
     if (!wantClump)
         coop::trash_clump_pose_stream::ClearDriveForEid(E);  // the carry ends at the land
     void* next = coop::trash_mirror::Materialize(E, cls, payload.chipType, loc, rot, scale,
@@ -112,6 +119,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
         coop::trash_mirror::Unpin(cur);                         // no-op for a native we never pinned
         DestroyEchoSuppressed(cur);
     }
+    if (!wantClump) coop::pile_look::LogLandLook("CLIENT", E, next);
     UE_LOGI("[PILE] CLIENT convert %s eid=%u ctx=%u -> %s cls='%ls' actor=%p at (%.1f,%.1f,%.1f) chipType=%u "
             "(predecessor %p retired)%s",
             edge, E, static_cast<unsigned>(payload.ctx), wantClump ? "CLUMP" : "PILE", cls.c_str(),

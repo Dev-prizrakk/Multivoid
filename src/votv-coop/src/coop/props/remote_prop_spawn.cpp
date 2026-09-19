@@ -17,6 +17,7 @@
 #include "coop/creatures/npc_sync.h"  // IsAllowlistedClass, the NPC half of the quiescence probe
 #include "coop/player/hand_item.h"    // CollectHandAxisActors: the hand axis is not adoptable
 #include "coop/player/players_registry.h"  // kMaxPeers (the hand-axis buffer)
+#include "coop/props/pile_look.h"
 #include "coop/props/pile_spawn_bind.h"  // the pile's spawn-time twin destroy and adopt
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
 #include "coop/dev/spawn_order_probe.h"  // the keyless load-spawn coverage probe
@@ -149,6 +150,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // and physics machinery, because a pile is keyless and carries its identity as an eid. With
     // skipBind, OnConvert binds the element itself.
     if (ue_wrap::prop::IsTrashClassName(classW)) {
+        // The sender's look of this pile, kept per eid: the bound actor takes it now, and an actor
+        // bound later -- a pending own-save bind, a re-bind after GC churn -- takes it at the bind.
+        coop::pile_look::OnHostLook(payload.elementId, payload.look);
         // If this eid already resolves to a live bound-mirror native, that native IS the mirror:
         // nothing to spawn and nothing to register.
         if (auto* be = coop::element::Registry::Get().Get(payload.elementId)) {
@@ -192,8 +196,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // for. It falls through to the materialise below.
         }
         // Either form is the game's own actor, parked. Materialize binds and marks save-native
-        // itself (unless skipBind, OnConvert's); the payload rotation is the host's captured
-        // visible-mesh rotation, so the mirror's roll matches the host's.
+        // itself (unless skipBind, OnConvert's), and the bind gives the pile the look kept above.
         void* mirror = coop::trash_mirror::Materialize(payload.elementId, classW, payload.chipType,
                                                        loc, rot, scale, senderSlot, skipBind,
                                                        /*rebindInPlace=*/false);
