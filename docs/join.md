@@ -52,8 +52,19 @@ and the lanes that care carry a seed instead (step 5).
 ### 2. Save transfer
 
 The client asks for the host's world. The host captures its live world into a scratch slot
-through the game's own save path (`ue_wrap/engine/save_capture`) and streams the file on the
-bulk lane in chunks paced by send-buffer backpressure (`coop/save/save_transfer`). The game
+through the game's own save path (`ue_wrap/engine/save_capture`). The game's gather of the world
+into its save object (`mainGamemode::saveObjects`) returns without gathering while the game
+counts an event as running, and so do the two gathers it calls, of the doors, lights and keypads
+(`saveTriggers`) and of the primitives. For the game that means "no saving during an event"; for a
+capture it would mean a world from the last gather handed over as the live one: props the host
+destroyed since standing again in the joiner's world. So for the span of the capture's own call
+the wrapper refuses the event test those three functions make, at the script loop
+(`ue_wrap/core/script_gate`), and refuses the capture when it cannot show that the world gather
+ran, so that the stale fallback below is taken knowingly. What a forced gather lets through: event
+actors that implement the save interface (many do, by inheritance) are gathered like any other
+actor and ride the blob; a mirror lane that owns such a class already refuses its local spawn on
+a client.
+The host then streams the file on the bulk lane in chunks paced by send-buffer backpressure (`coop/save/save_transfer`). The game
 writes a save in place, with no rename, so the file is trusted only when its size and timestamp
 hold across two polls and two full reads agree. If the live capture cannot run, the host streams
 its slot file as it is on disk (the stale fallback; the reconcile in step 6 owns the difference).

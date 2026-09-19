@@ -2,13 +2,16 @@
 
 #include "ue_wrap/engine/save_capture.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/world_identity.h"  // the gamemode must belong to the CURRENT world
 
+#include <atomic>
 #include <cstdint>
 
 namespace ue_wrap::save_capture {
@@ -18,20 +21,149 @@ namespace P = ue_wrap::profile;
 
 namespace {
 
-// Dispatch a no-argument mainGamemode UFunction by name. Returns false (logged) if
-// the function is unresolved or the ProcessEvent dispatch fails.
-bool CallGmVoid(void* gm, void* gmCls, const wchar_t* fnName) {
-    void* fn = R::FindFunction(gmCls, fnName);
-    if (!fn) {
-        UE_LOGW("save_capture: mainGamemode.%ls unresolved", fnName);
-        return false;
+// ---- saveObjects gathers NOTHING while the game says an event is on ---------------------------
+//
+// mainGamemode::saveObjects asks lib_C::getEvent before it walks the world, and on true it runs
+// the save animation and the held-object save, then what it had queued before the test (its two
+// sub-gathers, a clear of its scratch list and a garbage collection), and returns: `objectsData`,
+// `playerTransform`, the drone record and the rest of the gather are left exactly as the LAST
+// gather wrote them (cfg: saveObjects @502 -> @639 when isEventActive, -> @858 the actor loop
+// otherwise). getEvent
+// is `activeEvents > 0` OR the local camera outside the 90 000-unit box around the origin. For the
+// game that is "you cannot save during an event". For a capture it is a world from the past handed
+// over as the live one: measured with a badSun event running, a joiner's world held three props
+// the host had destroyed two minutes earlier, because the container still held the previous
+// capture's records (`objectsData 3949 -> 3949`).
+//
+// saveObjects is not the only one. It runs `Save Primitives` and `saveTriggers` on every path
+// (cfg: @492 and @497 push them before the event branch), and each of those opens with the same
+// test and skips ITS gather on true -- the int_primitive actors, and the int_ttrigger ones: doors,
+// lights, keypads. Three gatherers, one gate each.
+//
+// A capture is not a save, so for the span of OUR saveObjects call, and only for the getEvent
+// those three functions make, the body is refused at the VM's script loop and its out parameter
+// left false. The refusal itself writes nothing but that local. What it lets through does:
+//   * the gather writes the host's LIVE save object in the middle of an event, which the game
+//     itself never does; nothing puts it back, so a save the host makes later in the same event
+//     (it does not gather either) writes that mid-event world to the host's own slot;
+//   * event actors ARE gathered when they are int_save, and many are, by inheritance: of the 87
+//     classes that register an event, 21 implement int_save -- 11 through actor_save_C (badSun,
+//     fleshRain, erieChop, arirTrasher, skyUfo, ufoDropper, zombieHordeController, obelisk,
+//     roz_anim, midasufotest, outsideChurch), 7 through prop_C, and ATV, kerfurOmega and firetank
+//     directly. Their records ride the blob and the joiner's load spawns them. For the classes a
+//     mirror lane owns, that lane already refuses a local spawn on a client; for the rest the
+//     joiner runs the event's own actor from its saved state. Neither has been measured per class.
+bool  g_capturing = false;          // game thread: inside our saveObjects call
+void* g_saveObjectsFn = nullptr;    // the world gather: the one the gather hook speaks for
+void* g_saveTriggersFn = nullptr;
+void* g_savePrimitivesFn = nullptr;
+void* g_getEventFn = nullptr;
+int32_t g_offIsEventActive = -1;
+int   g_worldGateRefused = 0;       // per capture: saveObjects' own test
+int   g_otherGatesRefused = 0;      // per capture: the two it calls
+std::atomic<WorldGatherFn> g_gatherHook{nullptr};
+
+void RaiseGather() {
+    if (const WorldGatherFn fn = g_gatherHook.load(std::memory_order_acquire)) fn();
+}
+
+script_gate::Verdict OnGetEventPre(const script_gate::Call& c) {
+    if (!g_capturing) return script_gate::Verdict::Run;
+    // A call with no Blueprint caller (ProcessEvent) names nobody, and an unresolved gatherer is
+    // null too: null never matches.
+    if (!c.callerFunction) return script_gate::Verdict::Run;
+    const bool world = c.callerFunction == g_saveObjectsFn;
+    if (!world && c.callerFunction != g_saveTriggersFn && c.callerFunction != g_savePrimitivesFn)
+        return script_gate::Verdict::Run;
+    if (g_offIsEventActive >= 0)
+        if (uint8_t* out = script_gate::OutParamPtr(c, g_offIsEventActive)) *out = 0;
+    if (world) { ++g_worldGateRefused; RaiseGather(); }
+    else ++g_otherGatesRefused;
+    return script_gate::Verdict::Cancel;
+}
+
+// The game's own saveObjects (a refused body has no post): the answer getEvent just gave is the
+// branch saveObjects takes next.
+void OnGetEventPost(const script_gate::Call& c) {
+    if (!c.callerFunction || c.callerFunction != g_saveObjectsFn || g_offIsEventActive < 0) return;
+    const uint8_t* out = script_gate::OutParamPtr(c, g_offIsEventActive);
+    if (out && *out == 0) RaiseGather();
+}
+
+// This world's gamemode, or null; CaptureLiveWorldToScratchSlot says why the first candidate of the
+// scan is not good enough.
+void* CurrentGamemode() {
+    void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
+    for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {
+        // With no current world there is nothing to judge against -- boot, mid-travel, or a
+        // recook that broke the world lookup, in which case WorldOf answers null for everything
+        // too -- so take the first candidate, which is what an unfiltered scan would return.
+        if (!nowWorld) return cand;
+        // Otherwise the stamp must name THIS world. A null stamp is a rejection here, not a
+        // shrug: elsewhere null means "not world-scoped", but that answer belongs to classes,
+        // CDOs and assets, whose outer chain reaches a package. A gamemode INSTANCE is outered
+        // to its level in one hop, so the only way it stamps null is that the level's owning
+        // world has already been nulled -- which names a torn-down world, the very thing being
+        // excluded.
+        if (::ue_wrap::world_identity::WorldOf(cand) == nowWorld) return cand;
     }
-    ue_wrap::ParamFrame f(fn);
-    if (!f.valid()) return false;
-    return ue_wrap::Call(gm, f);
+    return nullptr;
 }
 
 }  // namespace
+
+void SetWorldGatherHook(WorldGatherFn fn) { g_gatherHook.store(fn, std::memory_order_release); }
+
+bool InstallGatherWatch() {
+    if (g_getEventFn) return true;
+    // The cheap preconditions first, and a failure that cannot heal is final: every lookup below
+    // walks the object array, and this is retried from a 1 Hz tick for as long as it answers false.
+    static bool s_final = false;
+    if (s_final || !script_gate::IsInstalled()) return false;
+    void* libCls = R::FindClass(L"lib_C");
+    void* gmCls = R::FindClass(P::name::GamemodeClass);
+    if (!libCls || !gmCls) return false;  // Blueprint classes load with the world: ask again later
+    void* fn = R::FindFunction(libCls, L"getEvent");
+    void* saveObjects = R::FindFunction(gmCls, P::name::MainGamemodeSaveObjectsFn);
+    if (!fn || !saveObjects) {
+        // Both classes are loaded and a function is not on them: a recook renamed it.
+        s_final = true;
+        UE_LOGE("save_capture: lib_C::getEvent=%p mainGamemode::saveObjects=%p -- the gather watch "
+                "cannot stand on this build", fn, saveObjects);
+        return false;
+    }
+    g_offIsEventActive = R::FindParamOffset(fn, L"isEventActive");
+    g_saveObjectsFn = saveObjects;
+    // Either of these missing is a recook's rename: the capture's proof below then reports the
+    // gate it could not hold instead of passing a stale half.
+    g_saveTriggersFn = R::FindFunction(gmCls, P::name::MainGamemodeSaveTriggersFn);
+    g_savePrimitivesFn = R::FindFunction(gmCls, L"Save Primitives");
+    if (!script_gate::Watch(fn, /*tag=*/0, &OnGetEventPre, &OnGetEventPost)) {
+        s_final = true;  // a full table or a refused function: Watch has said which
+        return false;
+    }
+    g_getEventFn = fn;
+    return true;
+}
+
+// Asked through the game's own function, and NOT through the watch: "the watch does not stand" is
+// exactly when this answer is needed, so it resolves getEvent by itself. Our call arrives with no
+// Blueprint caller, so a standing watch lets it run.
+EventState GameEventState() {
+    // The class default object never dies with a world; the lookup is a name-rendering walk.
+    static ue_wrap::CachedObjRef s_libCdo;
+    static void* s_getEventFn = nullptr;
+    if (!s_libCdo.Alive()) s_libCdo.Set(R::FindClassDefaultObject(L"lib_C"));
+    void* libCdo = s_libCdo.Raw();
+    if (libCdo && !s_getEventFn) s_getEventFn = R::FindFunction(R::ClassOf(libCdo), L"getEvent");
+    void* gm = CurrentGamemode();
+    if (!libCdo || !s_getEventFn || !gm) return EventState::Unknown;
+    ue_wrap::ParamFrame f(s_getEventFn);
+    if (!f.valid()) return EventState::Unknown;
+    f.Set<void*>(L"__WorldContext", gm);
+    if (!ue_wrap::Call(libCdo, f)) return EventState::Unknown;
+    return f.Get<uint8_t>(L"isEventActive") != 0 ? EventState::On : EventState::Off;
+}
 
 bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     UE_ASSERT_GAME_THREAD("save_capture::CaptureLiveWorldToScratchSlot");
@@ -51,21 +183,7 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     // describes nothing -- a saveSlot whose object arrays are empty, terminator intact, a kilobyte
     // or so long. A joiner handed that keeps its own world, and the two then disagree on every door
     // and vehicle.
-    void* gm = nullptr;
-    void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
-    for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {
-        // With no current world there is nothing to judge against -- boot, mid-travel, or a
-        // recook that broke the world lookup, in which case WorldOf answers null for everything
-        // too -- so take the first candidate, which is what an unfiltered scan would return.
-        if (!nowWorld) { gm = cand; break; }
-        // Otherwise the stamp must name THIS world. A null stamp is a rejection here, not a
-        // shrug: elsewhere null means "not world-scoped", but that answer belongs to classes,
-        // CDOs and assets, whose outer chain reaches a package. A gamemode INSTANCE is outered
-        // to its level in one hop, so the only way it stamps null is that the level's owning
-        // world has already been nulled -- which names a torn-down world, the very thing being
-        // excluded.
-        if (::ue_wrap::world_identity::WorldOf(cand) == nowWorld) { gm = cand; break; }
-    }
+    void* gm = CurrentGamemode();
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     if (!gm || !gmCls) {
         UE_LOGW("save_capture: no mainGamemode belonging to the CURRENT world -- refusing to "
@@ -98,7 +216,7 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     // 3. Repopulate the in-memory world save from LIVE actors. saveObjects is the critical
     //    step: it walks every int_save_C world actor (props + NPCs, including a turned-on kerfur,
     //    which serializes as its live NPC state -- exactly what a single-player save/reload
-    //    restores). saveTriggers refreshes door/light/keypad states. The capture therefore
+    //    restores). It runs `Save Primitives` and `saveTriggers` itself, on every path. The capture therefore
     //    carries the HOST's player state too: saveObjects writes playerTransform and
     //    inventoryData itself, and the carried items, equipment and hold live in this same
     //    save object. Nothing is stripped here; the joiner replaces what is per-player on its
@@ -116,12 +234,59 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         if (!f.valid()) return false;
         // saveObjects(bool quicksave): the zeroed frame leaves quicksave=false (the
         // full populate, matching a normal save) -- exactly what we want.
-        if (!ue_wrap::Call(gm, f)) {
+        //
+        // The gather must run whatever the game thinks of events (see OnGetEvent). The script
+        // gate is a session-wide switch with several owners, so it is held on for this call and
+        // put back as it was found.
+        const bool watching = InstallGatherWatch();
+        const bool gateWasOn = script_gate::IsEnabled();
+        script_gate::SetEnabled(true);
+        g_worldGateRefused = 0;
+        g_otherGatesRefused = 0;
+        g_capturing = true;
+        const bool called = ue_wrap::Call(gm, f);
+        g_capturing = false;
+        script_gate::SetEnabled(gateWasOn);
+        if (!called) {
             UE_LOGW("save_capture: mainGamemode.saveObjects dispatch failed -- abort");
             return false;
         }
+        // What ran is read off the refusals, not assumed. saveObjects asks its event test on the
+        // way into the world gather and nowhere else, so a refusal there IS the gather; the two it
+        // calls each ask once.
+        if (g_worldGateRefused >= 1 && g_otherGatesRefused >= 2) {
+            UE_LOGI("save_capture: the world, trigger and primitive gathers ran with the game's event "
+                    "test refused (getEvent: saveObjects %d, the two it calls %d)",
+                    g_worldGateRefused, g_otherGatesRefused);
+        } else if (g_worldGateRefused >= 1) {
+            // The world is current; doors, lights and keypads reach a joiner on their own lanes too.
+            UE_LOGE("save_capture: the world gather ran, but saveTriggers / Save Primitives were held "
+                    "open %d time(s) of 2 -- a function was renamed by a recook; during an event "
+                    "their half of this capture is a previous gather's", g_otherGatesRefused);
+        } else if (watching) {
+            // Watched, and never asked. By the bytecode that is saveObjects' map test refusing the
+            // level before anything else runs (`isSublevelAllowed(level) || subArea == None`, cfg
+            // @5 -> @668, "Save error: invalid map"); a fault absorbed in our own callback lands
+            // here too. Either way no gather can be shown, and a container that holds a previous
+            // gather is not streamed as the live world: the caller has a path that KNOWS it is
+            // stale.
+            UE_LOGE("save_capture: saveObjects never asked its event test -- it returned before its "
+                    "world gather (the game's map test refuses this level?). Refusing this capture.");
+            return false;
+        } else {
+            // No watch, so nothing could be refused and nothing forced: the game decided.
+            const EventState ev = GameEventState();
+            if (ev != EventState::Off) {
+                UE_LOGE("save_capture: the event test could not be watched and %s -- the container "
+                        "may hold a PREVIOUS gather. Refusing this capture.",
+                        ev == EventState::On ? "an event IS active: saveObjects skipped its gather"
+                                             : "the game cannot be asked whether an event is active");
+                return false;
+            }
+            UE_LOGW("save_capture: the event test could not be watched; the game says no event is "
+                    "active, so the gathers ran -- a capture during an event will be refused");
+        }
     }
-    CallGmVoid(gm, gmCls, P::name::MainGamemodeSaveTriggersFn);  // best-effort; objects are the critical half
 
     // Safety probe: confirm saveObjects rebuilt (didn't append) objectsData.
     const int32_t objCountAfter = objectsDataNum();
@@ -147,8 +312,8 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
 
     // 4. Serialize it to a SCRATCH slot. GameplayStatics::SaveGameToSlot(obj, slot,
     //    idx): the slot NAME is our parameter, so the host's canonical slot is never
-    //    named or touched. On the host SaveGameToSlot is un-hooked (coop::save_block
-    //    installs on clients only), so this runs as the stock engine serializer.
+    //    named or touched. The call passes through ue_wrap/engine/save_to_slot_hook like any
+    //    other world save; a listener there tells it from the host's own save by this slot name.
     void* gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     void* gsCls = gsCdo ? R::ClassOf(gsCdo) : nullptr;
     void* saveFn = gsCls ? R::FindFunction(gsCls, P::name::SaveGameToSlotFn) : nullptr;
