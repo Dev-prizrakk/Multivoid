@@ -62,6 +62,17 @@ coop::element::ElementId g_relEdgeLoggedEid = coop::element::kInvalidId;
 int  g_relEdgeLoggedSkip = -1;  // -1 = nothing reported yet, else the last relSkip reported
 coop::element::ElementId g_gapLoggedEid = coop::element::kInvalidId;
 
+// The held stream's grab generation: bumped on every new-held edge and stamped into every pose
+// and the grab's PropRelease, so a receiver can drop the poses of a grab its reliable release
+// already ended (the release and the poses ride channels with no cross-ordering). Skips 0, which
+// the receiver reads as unstamped-and-fresh.
+uint8_t g_grabGen = 0;
+// The last streamed held transform, the release edge's transform fallback when the actor is
+// already dead (a churn re-pile) or its velocity read failed.
+ue_wrap::FVector  g_lastHeldPoseLoc{};
+ue_wrap::FRotator g_lastHeldPoseRot{};
+bool g_haveHeldPose = false;
+
 // The local player's pose, on the game thread at the send rate.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
@@ -185,6 +196,8 @@ void OnSessionStart() {
     g_relEdgeLoggedEid = coop::element::kInvalidId;
     g_relEdgeLoggedSkip = -1;
     g_gapLoggedEid = coop::element::kInvalidId;
+    g_grabGen = 0;
+    g_haveHeldPose = false;
 }
 
 void Tick(coop::net::Session& session, void* local, void* controller) {
@@ -282,6 +295,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
+            // A new grab: the stream's generation moves, so the poses of THIS grab and its
+            // eventual PropRelease share a gen the receiver can gate stale bursts by.
+            if (++g_grabGen == 0) g_grabGen = 1;  // wrap past the unstamped value
+            g_haveHeldPose = false;
             // The new-held edge. A held trash clump is adopted here onto the grabbed pile's eid:
             // the birth certificate the BeginDeferred thunk recorded at its spawn carries the pile
             // eid and chipType, and this edge consumes it and broadcasts the ToClump convert.
@@ -368,6 +385,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // The trash entity's sync-time context, so the receiver drops a carry pose that arrives
         // after a transition; 0 for a non-trash prop.
         pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
+        pp.grabGen = g_grabGen;
         const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
         const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
         pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
@@ -376,6 +394,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+        // The release edge's transform fallback: the last streamed pose of THIS grab.
+        g_lastHeldPoseLoc = loc;
+        g_lastHeldPoseRot = rot;
+        g_haveHeldPose = true;
         // Only a pose with a cross-peer identity (a key or an eid) is streamed: a clump grabbed
         // before quiescence that the broadcast declined has neither, and streaming it floods the
         // peer with unresolved-pose warnings for an actor it will never have. The stream resumes
@@ -444,12 +466,16 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     pp.key.data[pp.key.len++] = static_cast<char>(fkeyW[i]);
                 pp.elementId = static_cast<uint32_t>(g_lastHeldEid);
                 pp.ctx       = coop::trash_channel::CtxForEid(g_lastHeldEid);
+                pp.grabGen   = g_grabGen;
                 const auto loc = ue_wrap::engine::GetActorLocation(g_lastHeldProp.Raw());
                 const auto rot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
                 pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
                 pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
                 pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
                 pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+                g_lastHeldPoseLoc = loc;
+                g_lastHeldPoseRot = rot;
+                g_haveHeldPose = true;
                 session.SetLocalPropPose(true, pp);
                 static uint64_t sFlight = 0;
                 if ((sFlight++ % 30) == 0)
@@ -498,6 +524,17 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     }
                 }
             }
+            // The release-edge transform: the live actor's own when it survives the edge, else the
+            // last pose this grab streamed. Receivers snap to it before simulating, so every peer
+            // starts the throw from one transform instead of its own lagging interpolation.
+            ue_wrap::FVector  relLoc = g_lastHeldPoseLoc;
+            ue_wrap::FRotator relRot = g_lastHeldPoseRot;
+            bool hasTransform = g_haveHeldPose;
+            if (g_lastHeldProp.Alive()) {
+                relLoc = ue_wrap::engine::GetActorLocation(g_lastHeldProp.Raw());
+                relRot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
+                hasTransform = true;
+            }
             const float linMagSq = vel.linearCmS.X * vel.linearCmS.X +
                                    vel.linearCmS.Y * vel.linearCmS.Y +
                                    vel.linearCmS.Z * vel.linearCmS.Z;
@@ -508,11 +545,17 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
             session.SendPropRelease(g_lastHeldKey,
                                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
+                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z,
+                                    relLoc.X, relLoc.Y, relLoc.Z,
+                                    ue_wrap::NormalizeAxis(relRot.Pitch),
+                                    ue_wrap::NormalizeAxis(relRot.Yaw),
+                                    ue_wrap::NormalizeAxis(relRot.Roll),
+                                    hasTransform, relEid, /*relCtx=*/0u, g_grabGen);
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+        g_haveHeldPose = false;
         }
     }
 

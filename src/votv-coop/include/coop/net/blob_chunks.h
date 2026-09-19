@@ -38,13 +38,21 @@ inline uint64_t Fnv64(const uint8_t* p, size_t n) {
 }
 inline uint64_t Fnv64(const std::vector<uint8_t>& b) { return Fnv64(b.data(), b.size()); }
 
-// The transport ceiling: 255 chunks x the inline chunk payload. A blob past this NEVER sends
+// The transport ceiling: 65535 chunks x the inline chunk payload. A blob past this NEVER sends
 // (ChunkAndSend warns and returns false before any chunk), so a caller with unbounded content must
 // bound BELOW this and check the return -- an ignored false on a canonical path is a silent
 // permanent divergence.
 inline constexpr size_t MaxBlobBytes() {
-    return sizeof(coop::net::BlobChunkPayload{}.data) * 255;
+    return sizeof(coop::net::BlobChunkPayload{}.data) * 65535;
 }
+
+// The per-assembly byte cap on the RECEIVER: `chunks` is attacker-chosen, so a claimed total of
+// 65535 chunks must not reserve ~14 MB before a byte of it is verified. Legitimate blobs are far
+// under this (the largest is the per-player inventory, one save record per item); a claim past the
+// cap is dropped whole with one WARN. The send side enforces the SAME bound (ChunkAndSend's
+// ceiling is the smaller of this and the wire format's chunk-count limit), so a blob the receiver
+// would drop is never sent -- a dropped canonical blob is a silent permanent divergence.
+inline constexpr size_t kMaxAssemblyBytes = 4 * 1024 * 1024;
 
 // Ship one blob as BlobChunkPayload chunks under `kind` with per-sender id `seq`. True only if
 // every chunk was accepted.
@@ -79,7 +87,7 @@ public:
 
 private:
     struct Assembly {
-        uint8_t expectChunks = 0, gotChunks = 0;
+        uint16_t expectChunks = 0, gotChunks = 0;
         std::vector<uint8_t> blob;
         std::chrono::steady_clock::time_point started{};
     };

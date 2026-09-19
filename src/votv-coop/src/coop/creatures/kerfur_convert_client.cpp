@@ -1,7 +1,8 @@
 // coop/creatures/kerfur_convert_client.cpp -- the client half of the kerfur conversion:
-// conversion-ghost custody (claim and park, cleanup reap, take by eid) and the KerfurConvert
-// wire apply. Interface: coop/creatures/kerfur_convert_client.h; the feature narrative is in
-// kerfur_convert.h. The class pointers and the session arrive from the kerfur_convert install.
+// conversion-ghost custody (claim and park, peek-by-eid adopt with forget-on-success, cleanup
+// reap) and the KerfurConvert wire apply. Interface: coop/creatures/kerfur_convert_client.h; the
+// feature narrative is in kerfur_convert.h. The class pointers and the session arrive from the
+// kerfur_convert install.
 
 #include "coop/creatures/kerfur_convert_client.h"
 
@@ -58,16 +59,19 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, coop::ele
     if (toNpc) {
         // Adopt the eid-tagged ghost: the initiator's ghost is always tagged with the converting
         // eid, and a non-initiator has no ghost at it, so it fresh-spawns below, eid-deduped.
+        // Peek, not take: a failed adopt must leave the ghost parked for the cleanup's orphan
+        // timeout, never untracked.
         void* ghost = (adoptEid != coop::element::kInvalidId)
-                          ? TakeParkedGhostByEid(static_cast<uint32_t>(adoptEid), /*wantNpc=*/true)
+                          ? PeekParkedGhostByEid(static_cast<uint32_t>(adoptEid), /*wantNpc=*/true)
                           : nullptr;
         if (ghost) {
             if (coop::npc_mirror::AdoptExistingNpcAsMirror(ghost, static_cast<uint32_t>(eid), classW)) {
+                ForgetParkedGhost(ghost);
                 UE_LOGI("kerfur_convert[client]: adopted parked turn-on ghost as NPC mirror eid=%u (by eid)", eid);
                 return;
             }
             // The adopt failed on a duplicate eid: fall through to a fresh spawn beside it; the
-            // cleanup reaps the ghost.
+            // ghost stays parked and the cleanup's timeout reaps it.
         }
         void* actorClass = R::FindClass(classW.c_str());
         if (!actorClass) {
@@ -80,12 +84,14 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, coop::ele
     } else {
         const std::string key8 = "coopkerfur#" + std::to_string(static_cast<unsigned>(eid));
         // If our own turn-off parked a prop ghost tagged with the converting eid, adopt that exact
-        // actor as the host-eid mirror and snap it to the authoritative pose.
+        // actor as the host-eid mirror and snap it to the authoritative pose. RegisterPropMirror
+        // binds unconditionally, so the ghost's custody closes here.
         if (adoptEid != coop::element::kInvalidId) {
-            if (void* ghost = TakeParkedGhostByEid(static_cast<uint32_t>(adoptEid), /*wantNpc=*/false)) {
+            if (void* ghost = PeekParkedGhostByEid(static_cast<uint32_t>(adoptEid), /*wantNpc=*/false)) {
                 std::wstring key8w(key8.begin(), key8.end());
                 coop::remote_prop::RegisterPropMirror(eid, ghost, key8w, classW, /*senderSlot=*/0,
                                                       /*rebindInPlace=*/false);
+                ForgetParkedGhost(ghost);
                 ue_wrap::engine::SetActorLocation(ghost, ue_wrap::FVector{lx, ly, lz});
                 ue_wrap::engine::SetActorRotation(ghost, ue_wrap::FRotator{rp, ry, rr});
                 // The claim does not freeze a prop ghost, so it has already fallen and settled by
@@ -322,19 +328,27 @@ void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& p, void* lo
             p.kerfurId, toNpc ? "->NPC(turn-on)" : "->prop(turn_off)", p.oldEid, p.newEid, classW.c_str());
 }
 
-// Take (find and remove) the parked ghost tagged with `srcEid` of the requested form, returning
-// its actor or null. Header-declared, so defined outside the anonymous namespace; the parked
-// list is still visible within this translation unit.
-void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc) {
+// Peek (find, do NOT remove) the parked ghost tagged with `srcEid` of the requested form,
+// returning its live actor or null. The row stays: a successful adopt forgets it at its site,
+// a failed one leaves it for the cleanup's orphan timeout. Header-declared, so defined outside
+// the anonymous namespace; the parked list is still visible within this translation unit.
+void* PeekParkedGhostByEid(uint32_t srcEid, bool wantNpc) {
     const uint8_t wantProp = wantNpc ? uint8_t(0) : uint8_t(1);
-    for (auto it = g_parkedGhosts.begin(); it != g_parkedGhosts.end(); ++it) {
-        if (it->srcEid != srcEid || it->toProp != wantProp) continue;
-        void* actor = it->actor;
-        const int32_t idx = it->idx;
-        g_parkedGhosts.erase(it);
-        return (actor && R::IsLiveByIndex(actor, idx)) ? actor : nullptr;
+    for (const auto& g : g_parkedGhosts) {
+        if (g.srcEid != srcEid || g.toProp != wantProp) continue;
+        return (g.actor && R::IsLiveByIndex(g.actor, g.idx)) ? g.actor : nullptr;
     }
     return nullptr;
+}
+
+// Drop `actor`'s parked row (the successful-adopt close of custody). No match is a no-op.
+void ForgetParkedGhost(void* actor) {
+    if (!actor) return;
+    for (auto it = g_parkedGhosts.begin(); it != g_parkedGhosts.end(); ++it) {
+        if (it->actor != actor) continue;
+        g_parkedGhosts.erase(it);
+        return;
+    }
 }
 
 void SetSession(coop::net::Session* session) {

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 167;
+inline constexpr uint16_t kProtocolVersion = 168;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -867,7 +867,14 @@ struct PropPoseSnapshot {
     // the settled pile. 0 = no enforcement (a keyed prop). In a PropDrivePose batch the same byte is
     // the claim generation, which PropDriveEnd closes.
     uint8_t  ctx;
-    uint8_t  _pad[3];
+    // The sender's grab generation, bumped on every new-held edge and echoed by that grab's
+    // PropReleasePayload.grabGen: a reliable release and the unreliable poses of the grab it ends
+    // ride different channels with no cross-ordering, so a pose queued ahead of the release's
+    // dispatch can otherwise re-grab a just-released prop on the receiver. A receiver drops a pose
+    // whose grabGen equals the slot's last released gen -- the stale pre-release burst -- while the
+    // next grab's gen differs and passes. 0 = unstamped (never sent by this protocol version).
+    uint8_t  grabGen;
+    uint8_t  _pad[2];
 };
 static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
 
@@ -1101,7 +1108,12 @@ struct KerfurCommandPayload {
 static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
 
 // A release (PropRelease): the prop by key, its inherited linear and angular velocity at the
-// release edge, and for a keyless trash entity the eid and its generation. Sent once.
+// release edge, the final transform the releaser holds (flags bit 0), and for a keyless trash
+// entity the eid and its generation. Sent once. The final transform closes the pose stream's
+// terminal state on the reliable lane: without it every receiver re-enables physics at its own
+// last INTERPOLATED pose, which lags the releaser's true position by the fixed interp delay, so
+// each peer simulates the throw from a different start and the resting places diverge. With it
+// every receiver snaps to the same transform and applies the same velocity before simulating.
 struct PropReleasePayload {
     WireKey key;
     float   linVelX;   // cm/s -- GetPhysicsLinearVelocity at release
@@ -1110,13 +1122,22 @@ struct PropReleasePayload {
     float   angVelX;   // deg/s -- GetPhysicsAngularVelocityInDegrees at release
     float   angVelY;
     float   angVelZ;
+    // The final transform, valid iff flags bit 0: the releaser's actor location and rotation at
+    // the release edge (or its last streamed pose when the actor is already dead).
+    float   x, y, z;             // world cm
+    float   pitch, yaw, roll;    // deg (NormalizeAxis'd)
     // The trash entity's eid, so a keyless clump's throw routes by identity; 0 = a keyed prop.
     uint32_t elementId;
     // The trash entity's generation; a release older than the eid's known generation is dropped.
     uint8_t ctx;
-    uint8_t _pad[3];
+    // The grab generation the poses of the ended grab carried; a receiver drops a pose with this
+    // same gen from this slot as a stale pre-release burst (see PropPoseSnapshot.grabGen).
+    uint8_t grabGen;
+    uint8_t flags;     // bit 0 = the transform block is valid
+    uint8_t _pad[1];
 };
-static_assert(sizeof(PropReleasePayload) == 64, "PropReleasePayload must be 64 bytes");
+static_assert(sizeof(PropReleasePayload) == 88, "PropReleasePayload must be 88 bytes");
+inline constexpr uint8_t kPropReleaseFlagHasTransform = 0x01;
 // Every reliable payload carries this guard: a payload past one datagram's budget would be
 // refused at send time, so catch it at compile time.
 static_assert(sizeof(PropReleasePayload) <= 256 - 20 - 8,
@@ -1544,13 +1565,16 @@ static_assert(sizeof(HookDestroyPayload) == 4, "HookDestroyPayload must be 4 byt
 // One chunk of a serialized blob, shared by every chunked kind; the assembly key is (sender slot,
 // kind, blobSeq); chunks arrive in order; coop/blob_chunks owns send and reassembly. The email
 // blob is { u8 version; u8 username; u16 topicChars; u16 textChars; u16 pfpChars; topic UTF-16LE;
-// text; pfpLeaf }, capped at 256 / 4096 / 96 chars; signal rows are coop/signal_wire.
+// text; pfpLeaf }, capped at 256 / 4096 / 96 chars; signal rows are coop/signal_wire. The chunk
+// index and total are u16: the per-player inventory blob is caller-sized (one save record per
+// item) and the old u8 pair capped every blob at ~56 KB with a silent permanent drop, which a
+// large inventory hits. The receiver bounds a claimed assembly by blob_chunks' own byte cap.
 struct BlobChunkPayload {
     uint32_t blobSeq;    // 4 -- per-SENDER monotonically increasing (per kind)
-    uint8_t  chunkIdx;   // 1
-    uint8_t  chunks;     // 1 -- total (>=1)
+    uint16_t chunkIdx;   // 2
+    uint16_t chunks;     // 2 -- total (>=1)
     uint16_t chunkLen;   // 2 -- used bytes in data[]
-    uint8_t  data[220];  // 220
+    uint8_t  data[218];  // 218
 };
 static_assert(sizeof(BlobChunkPayload) == 228, "BlobChunkPayload must be 228 bytes");
 static_assert(sizeof(BlobChunkPayload) <= 256 - 20 - 8,
@@ -2040,7 +2064,9 @@ struct WeatherStatePayload {
     float    rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance
     float    rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed
     // The host's current interpolated levels, so a joiner snaps to them instead of ramping over
-    // minutes. Not in the dedup signature, which hashes only the flags and the four rain scalars.
+    // minutes. Not in the dedup signature (flags, flags2, the four rain scalars and the wind
+    // block are): these are eased/ramping accumulators that change every tick, so hashing them
+    // would defeat the dedupe; the fog-edge pulse and the scheduler observers re-send them.
     float    rain;            // AdaynightCycle_C::rain -- the rainStrength EASE TARGET.
                               // Anchored on apply so ReceiveTick doesn't drag the synced
                               // rainStrength back to the client's local target.

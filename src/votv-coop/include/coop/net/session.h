@@ -309,8 +309,12 @@ public:
     bool SendPropRelease(const WireKey& key,
                          float linVelX, float linVelY, float linVelZ,
                          float angVelX, float angVelY, float angVelZ,
+                         float x, float y, float z,             // the release-edge transform
+                         float pitch, float yaw, float roll,    // (NormalizeAxis'd)
+                         bool hasTransform,                     // false when nothing was ever streamed
                          uint32_t elementId = 0,  // trash-entity eid (0 = a keyed Aprop, routed by key)
-                         uint8_t ctx = 0);        // trash-entity sync-time context (0 = not trash, no enforcement)
+                         uint8_t ctx = 0,         // trash-entity sync-time context (0 = not trash, no enforcement)
+                         uint8_t grabGen = 0);    // the ended grab's generation (PropPoseSnapshot.grabGen)
     bool SendPropSpawn(const PropSpawnPayload& payload);
     bool SendPropDestroy(const PropDestroyPayload& payload);
     bool SendEntitySpawn(const EntitySpawnPayload& payload);

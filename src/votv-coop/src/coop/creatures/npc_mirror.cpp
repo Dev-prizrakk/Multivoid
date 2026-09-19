@@ -166,10 +166,14 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     // duplicate spawned beside it. Only the initiating client has a ghost at this eid; other peers
     // fall through to the fresh spawn.
     if (payload.convertFromEid != 0) {
-        if (void* ghost = coop::kerfur_convert_client::TakeParkedGhostByEid(payload.convertFromEid, /*wantNpc=*/true)) {
-            if (AdoptExistingNpcAsMirror(ghost, payload.elementId, classW)) return;
-            // Adopt failed (an eid collision): a fresh mirror instead; kerfur_convert's cleanup
-            // reaps the ghost.
+        // Peek, not take: a failed adopt leaves the ghost parked for the cleanup's orphan timeout.
+        if (void* ghost = coop::kerfur_convert_client::PeekParkedGhostByEid(payload.convertFromEid, /*wantNpc=*/true)) {
+            if (AdoptExistingNpcAsMirror(ghost, payload.elementId, classW)) {
+                coop::kerfur_convert_client::ForgetParkedGhost(ghost);
+                return;
+            }
+            // Adopt failed (an eid collision): a fresh mirror instead; the ghost stays parked and
+            // the cleanup's timeout reaps it.
         }
     }
     SpawnFreshNpcMirror(classW, actorClass, payload.elementId,

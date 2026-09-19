@@ -205,14 +205,21 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
 bool Session::SendPropRelease(const WireKey& key,
                               float linVelX, float linVelY, float linVelZ,
                               float angVelX, float angVelY, float angVelZ,
-                              uint32_t elementId, uint8_t ctx) {
+                              float x, float y, float z,
+                              float pitch, float yaw, float roll,
+                              bool hasTransform,
+                              uint32_t elementId, uint8_t ctx, uint8_t grabGen) {
     PropReleasePayload p{};
     p.key = key;
     p.linVelX = linVelX; p.linVelY = linVelY; p.linVelZ = linVelZ;
     p.angVelX = angVelX; p.angVelY = angVelY; p.angVelZ = angVelZ;
+    p.x = x; p.y = y; p.z = z;
+    p.pitch = pitch; p.yaw = yaw; p.roll = roll;
+    p.flags = hasTransform ? kPropReleaseFlagHasTransform : uint8_t(0);
     p.elementId = elementId;  // a keyless trash clump is routed by eid (key=None cannot disambiguate)
     p.ctx = ctx;              // the host's per-eid generation, so a stale throw cannot re-apply after a
                               // transition
+    p.grabGen = grabGen;      // the ended grab's gen, so a stale pre-release pose cannot re-grab
     return SendReliable(ReliableKind::PropRelease, &p, sizeof(p));
 }
 

@@ -34,13 +34,19 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
 // timeout. Driven at the poll cadence; a cheap no-op when empty.
 void CleanupParkedGhosts();
 
-// Take (find and remove) the parked ghost tagged with `srcEid` of the requested form (the
+// Peek (find, do NOT remove) the parked ghost tagged with `srcEid` of the requested form (the
 // parked turn-on NPC, or the turn-off prop), returning its actor or null. The client's own
 // toggle spawns a local kerfur through the EX_CallMath path ProcessEvent cannot see; the poll
 // parks it tagged with the converting eid, and the EntitySpawn receiver (turn-on) and
 // OnKerfurConvert adopt that exact actor by eid. Null for a peer that did not initiate, which
-// fresh-spawns. Game thread.
-void* TakeParkedGhostByEid(uint32_t srcEid, bool wantNpc);
+// fresh-spawns. The row stays parked until ForgetParkedGhost (a successful adopt) or the
+// cleanup's orphan timeout, so a FAILED adopt cannot leak an untracked ghost. Game thread.
+void* PeekParkedGhostByEid(uint32_t srcEid, bool wantNpc);
+
+// Drop `actor`'s parked-ghost row: the adopt succeeded and the actor is now a tracked wire
+// mirror (the cleanup would also drop it on its next poll, but the adopt site closes the
+// custody the moment it holds). No row matches a foreign or already-forgotten actor. Game thread.
+void ForgetParkedGhost(void* actor);
 
 // The client-only receiver for KerfurConvert, host to all. The sole conversion-transition
 // signal: destroy the old-form mirror at oldEid, then adopt this

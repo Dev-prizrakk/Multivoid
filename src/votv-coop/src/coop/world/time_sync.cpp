@@ -26,6 +26,16 @@ bool g_suppressedClient = false;  // we zeroed the local TimeScale (client)
 // coop/player/sleep_sync toggles this at the phase edges.
 std::atomic<bool> g_sleepAccelerate{false};
 
+// The free-run's midnight guard: at scale 1 the client's own `day` can reach maxTime if the ~2 Hz
+// corrections stall under the load a timelapse produces, and the crossing fires the midnight
+// cascade (taskNew/email/points) on the client's own RNG -- the emails never heal, the host's
+// real cascade rows append on top. Tick holds `day` this many game-seconds below maxTime while
+// accelerate runs: one engine frame cannot cross the margin at the 20x rate, so the cascade stays
+// unreachable, and the host's corrections (and the reliable accelerate END) write the true
+// post-midnight clock. Within the margin the held value and the corrections alternate, a
+// sub-second stutter just before midnight rather than a divergent inbox.
+constexpr float kCascadeGuardGameSec = 30.f;
+
 float ClientTimeScale() { return g_sleepAccelerate.load(std::memory_order_acquire) ? 1.0f : 0.0f; }
 
 // The client daynightCycle is a PURE host-authoritative mirror frozen at TimeScale=0 and never
@@ -133,6 +143,15 @@ void Tick() {
             if ((s_n++ % 20) == 0)  // ~every 10s at 2 Hz -- confirm convergence, not spam
                 UE_LOGI("time_sync: applied STREAM host clock totalTime=%.1f day=%.1f (client scale=%.0f)",
                         p.totalTime, p.day, ClientTimeScale());
+        }
+        // The free-run's midnight guard (kCascadeGuardGameSec): holds `day` below the cascade
+        // threshold every tick while accelerate runs, lost corrections or not.
+        if (g_sleepAccelerate.load(std::memory_order_acquire) && g_suppressedClient) {
+            float t = 0, d = 0, sc = 0, mt = 0;
+            if (DNC::ReadClock(t, d, sc) && DNC::ReadMaxTime(mt)) {
+                const float limit = mt - kCascadeGuardGameSec;
+                if (d > limit) DNC::ApplyClock(t, limit, ClientTimeScale());
+            }
         }
     }
 }

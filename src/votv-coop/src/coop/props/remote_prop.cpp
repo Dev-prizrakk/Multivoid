@@ -68,6 +68,22 @@ std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
 constexpr int      kUnstickStreak   = 5;
 constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
 
+// The grab generation of each slot's last received PropRelease. A pose of that same gen from that
+// slot is the stale pre-release burst: the reliable release and the unreliable poses ride channels
+// with no cross-ordering, and a pose queued on the net thread ahead of the release's game-thread
+// dispatch would otherwise re-grab the just-released prop (physics off, frozen at a lagging pose,
+// then the stream-stop release with zero velocity -- the throw's momentum lost). 0 = no release
+// seen; a pose's own grabGen of 0 is unstamped and always fresh. Cleared per slot on disconnect,
+// since a recycled slot's next occupant restarts its own gen space at 1.
+std::array<uint8_t, coop::players::kMaxPeers> g_releaseGen{};
+
+// How long a held keyed prop's stream gap FREEZES the mirror before the old implicit release
+// fires: a freeze keeps the prop convergent (the next pose, the reliable release or the holder's
+// disconnect resolves it), while an early physics-on drop lets a non-authoritative body displace
+// other props that no lane ever corrects. Past the window (a wedged-but-connected holder), the
+// release wins so nothing hangs mid-air forever.
+constexpr uint64_t kStreamGapFreezeMs = 10000;
+
 }  // namespace [drive helpers part 1]
 
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
@@ -269,6 +285,19 @@ void Tick(coop::net::Session& session) {
         bool isNew = false;
         const bool have = session.TryGetRemotePropPose(slot, pose, &isNew);
         if (have && isNew) {
+            // The stale pre-release burst: a pose of the grab this slot's last PropRelease ended
+            // (same gen), still queued when the release dispatched. Dropped whole -- the drive the
+            // release cleared stays clear, and the next grab's gen differs and passes.
+            if (pose.grabGen != 0 && pose.grabGen == g_releaseGen[slot]) {
+                static std::array<uint8_t, coop::players::kMaxPeers> s_lastDropGen{};
+                if (pose.grabGen != s_lastDropGen[slot]) {
+                    UE_LOGI("remote_prop: slot %d pose gen=%u == released gen -- STALE pre-release "
+                            "burst dropped (the reliable release already ended this grab)",
+                            slot, static_cast<unsigned>(pose.grabGen));
+                    s_lastDropGen[slot] = pose.grabGen;
+                }
+                continue;
+            }
             // A first snapshot or a changed identity (key or eid) resolves and switches physics
             // off. The eid check catches a re-grab of a new clump whose key is still None.
             if (!drive.actor || !KeyMatchesCache(slot, pose.key) || drive.lastEid != pose.elementId) {
@@ -306,16 +335,31 @@ void Tick(coop::net::Session& session) {
         // The interpolation advances every tick, pose or no pose: a smooth follow between sends,
         // and a stream gap freezes at the last target.
         AdvanceLerp(drive, nowMs);
-        // The stream-stop release, for a held item that is not a trash mirror: 500 ms of silence is a release.
-        // A trash mirror freezes through a gap and releases only on the reliable edge (a throw, a
-        // ToPile convert, a disconnect), so a hitch mid-walk no longer drops the carried pile.
+        // The stream-gap policy for a held item that is not a trash mirror: a gap up to
+        // kStreamGapFreezeMs FREEZES the mirror (the trash-mirror rule, extended to keyed props --
+        // local physics on a non-authoritative body displaces other props no lane corrects), and
+        // the reliable PropRelease or the holder's disconnect edge ends the freeze. Only a gap
+        // past the window falls back to the old implicit release, so a wedged-but-connected
+        // holder cannot hang a prop mid-air indefinitely.
         if (drive.actor && !drive.isTrashMirror && (nowMs - drive.lastApplyMs) > 500) {
-            UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
-                    slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
-            void* liveA = drive.LiveActor();
-            if (!StickHoldsPhysicsOff(liveA))
-                DriveTogglePhysics(liveA, drive.mesh, true);
-            ResetDriveState(drive);
+            if ((nowMs - drive.lastApplyMs) <= kStreamGapFreezeMs) {
+                // FREEZE: keep the drive and physics-off; one throttled line per slot per gap.
+                static std::array<uint64_t, coop::players::kMaxPeers> s_lastFreezeLogMs{};
+                if (nowMs - s_lastFreezeLogMs[slot] > 5000) {
+                    s_lastFreezeLogMs[slot] = nowMs;
+                    UE_LOGI("remote_prop: slot %d stream gap %llu ms -- FREEZING at last target "
+                            "(convergent: the release or the next pose resolves it; no local physics)",
+                            slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
+                }
+            } else {
+                UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose, past "
+                        "the freeze window)",
+                        slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
+                void* liveA = drive.LiveActor();
+                if (!StickHoldsPhysicsOff(liveA))
+                    DriveTogglePhysics(liveA, drive.mesh, true);
+                ResetDriveState(drive);
+            }
         }
     }
 }
@@ -328,10 +372,15 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                              payload.linVelY * payload.linVelY +
                              payload.linVelZ * payload.linVelZ;
     const float linSpeed = std::sqrt(linSpeedSq);
-    UE_LOGI("remote_prop: RELEASE wire '%ls' eid=%u ctx=%u linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f) deg/s",
+    UE_LOGI("remote_prop: RELEASE wire '%ls' eid=%u ctx=%u gen=%u linVel=(%.1f, %.1f, %.1f) |v|=%.1f cm/s angVel=(%.1f, %.1f, %.1f) deg/s",
             keyW.c_str(), payload.elementId, static_cast<unsigned>(payload.ctx),
+            static_cast<unsigned>(payload.grabGen),
             payload.linVelX, payload.linVelY, payload.linVelZ, linSpeed,
             payload.angVelX, payload.angVelY, payload.angVelZ);
+    // The gen of the grab this release ends, recorded before any branch below can return: every
+    // later pose of this gen from this slot is the stale pre-release burst the Tick gate drops.
+    if (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers))
+        g_releaseGen[senderSlot] = payload.grabGen;
     // A stale trash release (ctx older than the entity's last transition) is dropped, so a throw
     // delayed past a re-pile or re-grab never applies velocity to the re-skinned entity. ctx 0 or
     // eid 0 (a keyed release) is always fresh.
@@ -374,12 +423,20 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     }
     if (StickHoldsPhysicsOff(propActor)) {
         // The prop stuck while held (PropStickState arrived first on the same reliable lane): no
-        // physics re-enable and no velocity, the camera stays on the wall; the drive cache still
-        // clears.
+        // physics re-enable, no velocity and NO transform snap (the stick's commit-time transform
+        // is the pose that matters, and a release snap would rip it off the wall); the drive cache
+        // still clears.
         UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off",
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;
+    }
+    // The final transform snap: every receiver starts the throw from the releaser's own
+    // release-edge transform instead of its lagging interpolated pose, so the locally simulated
+    // flights (and the resting places they end at) begin from one shared state.
+    if (propActor && (payload.flags & coop::net::kPropReleaseFlagHasTransform)) {
+        ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.x, payload.y, payload.z});
+        ue_wrap::engine::SetActorRotation(propActor, ue_wrap::FRotator{payload.pitch, payload.yaw, payload.roll});
     }
     // A thrown trash mirror is not simulated here: local physics would diverge from the host's
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
@@ -557,6 +614,10 @@ void OnDisconnectForSlot(int peerSlot) {
     // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    // The release-gen gate's state goes with the slot: a recycled slot's next occupant restarts
+    // its own gen space at 1, which the departing peer's stored gen would otherwise match and
+    // drop as a stale burst.
+    g_releaseGen[peerSlot] = 0;
     // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
     // reach the next occupant; cleared before the early return, since a slot can have rows without
     // a drive.

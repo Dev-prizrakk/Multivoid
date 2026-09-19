@@ -17,21 +17,26 @@ constexpr size_t kMaxAssembliesPerSender = 4;
 
 namespace {
 // Shared chunker for SendBlob / SendBlobToSlot. `sendOne(p)` does the per-chunk transport
-// (broadcast vs slot-targeted); everything else (chunk count, 255-cap, all-or-nothing) is
+// (broadcast vs slot-targeted); everything else (chunk count, the ceiling, all-or-nothing) is
 // identical (RULE 2 -- one chunking implementation).
 template <class SendOne>
 bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
                   const std::vector<uint8_t>& blob, SendOne sendOne) {
     const size_t maxData = sizeof(coop::net::BlobChunkPayload{}.data);
-    const uint8_t chunks =
-        static_cast<uint8_t>(blob.empty() ? 1 : (blob.size() + maxData - 1) / maxData);
-    if (blob.size() > maxData * 255) {
-        UE_LOGW("blob_chunks: blob of %zu bytes exceeds the 255-chunk cap (kind %u) -- dropped",
-                blob.size(), static_cast<unsigned>(kind));
+    // The effective ceiling: the wire format's chunk-count limit and the receiver's assembly byte
+    // cap, whichever is smaller. A blob past it NEVER sends, so the receiver never drops a blob
+    // the sender considered legitimate (a dropped canonical blob is a permanent divergence).
+    const size_t ceiling =
+        MaxBlobBytes() < kMaxAssemblyBytes ? MaxBlobBytes() : kMaxAssemblyBytes;
+    if (blob.size() > ceiling) {
+        UE_LOGW("blob_chunks: blob of %zu bytes exceeds the chunked ceiling %zu (kind %u) -- dropped",
+                blob.size(), ceiling, static_cast<unsigned>(kind));
         return false;
     }
+    const uint16_t chunks =
+        static_cast<uint16_t>(blob.empty() ? 1 : (blob.size() + maxData - 1) / maxData);
     size_t off = 0;
-    for (uint8_t i = 0; i < chunks; ++i) {
+    for (uint16_t i = 0; i < chunks; ++i) {
         coop::net::BlobChunkPayload p{};
         p.blobSeq = seq;
         p.chunkIdx = i;
@@ -76,11 +81,13 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
     const auto now = std::chrono::steady_clock::now();
     const auto key = std::make_pair(senderSlot, p.blobSeq);
     // Anti-flood cap. blobSeq is ATTACKER-CHOSEN, and `map_[key]` below default-inserts, so before
-    // this cap one 228-byte packet bought a fresh assembly that reserved chunks * 220 = up to ~56
-    // KB -- about 246x amplification, on eight lanes, reachable client-to-host with no join or role
-    // gate. Only the size of ONE assembly was bounded (chunks is a u8); their NUMBER was not.
-    // order_sync caps its own table the same way -- this is that guard at the shared primitive, so
-    // every lane gets it at once instead of eight bespoke patches.
+    // this cap one 228-byte packet bought a fresh assembly that reserved chunks * 218 bytes -- at
+    // the u16 chunk count, a claimed 65535 chunks is ~14 MB, ~60,000x amplification -- on eight
+    // lanes, reachable client-to-host with no join or role gate. Two bounds, both here at the
+    // shared primitive so every lane gets them at once instead of eight bespoke patches: the
+    // NUMBER of concurrent assemblies from one sender (kMaxAssembliesPerSender, below), and the
+    // BYTES one assembly may claim (kMaxAssemblyBytes, at the reserve). order_sync caps its own
+    // table the same way.
     //
     // PER-SENDER, not global (unlike order_sync): a global table would let one flooding peer starve
     // every other peer's assemblies.
@@ -94,6 +101,13 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
                     kMaxAssembliesPerSender, p.blobSeq);
             return false;
         }
+        if (static_cast<size_t>(p.chunks) * sizeof(p.data) > kMaxAssemblyBytes) {
+            UE_LOGW("blob_chunks: sender %u blobSeq=%u claims %u chunks (~%zu KB, cap %zu KB) -- "
+                    "dropping the whole assembly",
+                    static_cast<unsigned>(senderSlot), p.blobSeq, static_cast<unsigned>(p.chunks),
+                    (static_cast<size_t>(p.chunks) * sizeof(p.data)) / 1024, kMaxAssemblyBytes / 1024);
+            return false;
+        }
     }
     auto& a = map_[key];
     if (a.expectChunks == 0) {
@@ -105,6 +119,7 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
         // Mismatched part: the RESTART semantics (see header).
         map_.erase(key);
         if (p.chunkIdx != 0) return false;
+        if (static_cast<size_t>(p.chunks) * sizeof(p.data) > kMaxAssemblyBytes) return false;
         auto& fresh = map_[key];
         fresh.expectChunks = p.chunks;
         fresh.started = now;

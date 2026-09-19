@@ -58,6 +58,12 @@ constexpr int kPollIntervalMs = 200;    // 5 Hz scan WHILE pending; zero cost ot
 // the late-loading twin. 60 s is longer than the sweep deadline, so quiescence always wins and this
 // only guards the pathological case where quiescence never signals at all.
 constexpr int kAdoptTimeoutMs = 60000;
+// The bind radius: a pending twin must stand within 5 m of the host's announced pose to bind.
+// Without it the nearest-match picked ANY same-class unclaimed actor in the world -- a parked
+// conversion ghost, another eid's un-adopted twin -- and bound a crossed identity. 5 m is the
+// radius the kerfur paths already bind by (kerfur_prop_adoption's kMaxBindDist2, the conversion
+// ghost claim); a genuinely absent twin stays pending and fresh-spawns at quiescence instead.
+constexpr float kMaxBindDist2 = 500.f * 500.f;
 
 using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_managers.h)
 
@@ -132,6 +138,7 @@ void ResolvePending() {
             const float dy = cands[c].y - e.locY;
             const float dz = cands[c].z - e.locZ;
             const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 > kMaxBindDist2) continue;                       // outside the bind radius
             if (bestIdx < 0 || d2 < bestD2) { bestIdx = static_cast<int>(c); bestD2 = d2; }
         }
         bool resolved = false;
