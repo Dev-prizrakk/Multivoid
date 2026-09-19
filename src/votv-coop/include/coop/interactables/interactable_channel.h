@@ -30,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -164,16 +165,25 @@ public:
                 std::lock_guard<std::mutex> lk(stateMutex_);
                 auto it = lastKnown_.find(r.first);
                 if (it == lastKnown_.end()) { lastKnown_[r.first] = cur; continue; }  // prime silently
-                if (it->second == cur) continue;                                       // no change
+                if (it->second == cur) {                                               // no change
+                    // A refused change that reverted before the channel freed: the streak is over.
+                    if (!sendRefused_.empty()) sendRefused_.erase(r.first);
+                    continue;
+                }
             }
             coop::net::KeyedTogglePayload p{};
             WireKeyFromString(r.first, p.key);
             p.action = cur ? 1 : 0;
             if (s->SendReliable(a_.kind, &p, sizeof(p))) {
                 { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[r.first] = cur; }
+                sendRefused_.erase(r.first);
                 UE_LOGI("%s: sent %s key='%ls'", a_.name, cur ? "ON" : "OFF", r.first.c_str());
-            } else {
-                UE_LOGW("%s: SendReliable failed key='%ls'", a_.name, r.first.c_str());
+            } else if (sendRefused_.insert(r.first).second) {
+                // The change stays unsent and this poll retries it every tick until the channel
+                // takes it (a joiner's save stream holds it for the length of the transfer), so the
+                // refusal is said once per streak: measured unthrottled, 1196 lines in 20 s.
+                UE_LOGW("%s: SendReliable refused key='%ls' -- retrying every poll until it is sent",
+                        a_.name, r.first.c_str());
             }
         }
     }
@@ -441,6 +451,7 @@ public:
         std::lock_guard<std::mutex> lk(stateMutex_);
         const size_t n = lastKnown_.size();
         lastKnown_.clear();
+        sendRefused_.clear();
         if (n > 0 || nP > 0)
             UE_LOGI("%s: OnDisconnect cleared %zu last-known + %zu pending", a_.name, n, nP);
     }
@@ -634,6 +645,7 @@ private:
 
     std::mutex stateMutex_;
     std::unordered_map<std::wstring, bool> lastKnown_;
+    std::unordered_set<std::wstring> sendRefused_;               // GT-only: keys whose refused send is already logged
 
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
     std::unordered_map<std::wstring, uint8_t> holdOpen_;          // host: door key -> bitmask of holding slots
