@@ -111,6 +111,16 @@ spawned pile in one call. The client's mirror of a resting pile is
 the game's own pile actor -- at a join the one the client loaded itself -- and the clump's is the
 game's own clump actor, both with the verbs that would author a transition refused.
 
+A clump is also a form the entity RESTS in: one that came to rest on a simulating box, on a slope
+or under a busy hand never turns back, and the game saves and loads it as a clump. So a clump at
+rest is enrolled, captured, expressed and bound exactly as a pile is -- the census and the capture
+take both forms, the snapshot's keyless row names either class, the joiner binds its own loaded
+copy of the row's form at the save-time position and parks it (tick and physics off: the host
+authors its pose), and the row is followed by a to-clump convert at the entity's current
+generation, without which every later pose of it is held. The key on a row says which form the
+save held: an entity that changed form in the join window is materialised as it is now, and the
+joiner's copy of the old form is retired at the key. `[V]`
+
 A DISPENSER pile (`trashBitsPile_C`, the "uses 6 of 7" one) is the opposite: it is a save actor and
 its save key IS its cross-peer identity, which is what its counter mirror, its depletion destroy and
 the host's watch on the broom verb all name it by. Every fact and every open item is on
