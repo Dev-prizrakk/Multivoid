@@ -47,6 +47,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/broom_stroke.cpp
     src/coop/items/broom_push.cpp
     src/ue_wrap/engine/save_capture.cpp
+    src/ue_wrap/engine/save_to_slot_hook.cpp
     src/ue_wrap/engine/engine_audio.cpp
     src/ue_wrap/engine/engine_bones.cpp
     src/ue_wrap/engine/engine_component.cpp
