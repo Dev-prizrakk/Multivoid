@@ -2206,6 +2206,8 @@ enum class GrabRefusedReason : uint8_t {
     NotAPile     = 6,   // the eid names a live actor that is not a chip pile
     NoVerb       = 7,   // the game's grab verb did not resolve
     NoClump      = 8,   // the grab verb ran and left no clump in the puppet's hand
+    TakenOver    = 9,   // not an answer to a request (reqId 0): the host's hand or a broom took the
+                        // clump out of the sender's carry, and its carry is over
 };
 struct GrabRefusedPayload {
     uint32_t eid;        // 4 -- the eid the refused GrabIntent named
@@ -2215,8 +2217,8 @@ struct GrabRefusedPayload {
 };
 static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 bytes");
 
-// A throw intent (ThrowIntent). mode kRelease: the native drop; the host derives the launch from
-// the puppet's smoothed hand motion. mode kHardThrow: the native camera-directed throw; the client
+// A throw intent (ThrowIntent). mode kRelease: the native drop; the clump leaves the puppet's
+// physics handle with the velocity the hold gave it. mode kHardThrow: the native camera-directed throw; the client
 // sends its camera-forward unit vector and the host applies the game's formula with the real mass
 // and the puppet's velocity. The clump re-piles itself on landing either way.
 namespace throw_mode { constexpr uint8_t kRelease = 0; constexpr uint8_t kHardThrow = 1; }

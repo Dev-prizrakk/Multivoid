@@ -239,6 +239,7 @@ const FunctionCheck kFunctions[] = {
     {P::name::PropInventoryClass,       P::name::PropInventoryTakeObjFn,     Severity::Important, "storage extract observer"},
     {P::name::PhysicsHandleComponentClass, P::name::GrabComponentAtLocationFn,    Severity::Important, "grab observer (light)"},
     {P::name::PhysicsHandleComponentClass, P::name::SetTargetLocationFn,          Severity::Important, "per-tick grab driver observer"},
+    {P::name::PhysicsHandleComponentClass, P::name::SetTargetLocationAndRotationFn, Severity::Important, "a puppet's trash carry: the host sets the handle's target each tick"},
     {P::name::PhysicsHandleComponentClass, P::name::ReleaseComponentFn,           Severity::Important, "grab release observer + before-destroy cleanup"},
     {P::name::PhysicsConstraintComponentClass, P::name::SetConstrainedComponentsFn, Severity::Important, "heavy grab observer"},
     {P::name::PhysicsConstraintComponentClass, P::name::BreakConstraintFn,        Severity::Important, "heavy grab release observer"},

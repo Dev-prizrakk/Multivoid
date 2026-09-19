@@ -90,9 +90,14 @@ void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId);
 // Client: the trash eid this player carries, or the invalid id. The use-press toggle reads it.
 coop::element::ElementId ClientCarryEid();
 
-// Host: `senderSlot` disconnected. Release any hold it owns so the eid is re-grabbable; its
-// puppet is gone, so the clump is already physics-released.
+// Host: `senderSlot` disconnected. Every clump it holds is let go where it is (OnHolderGone).
 void OnGrabHolderLeft(uint8_t senderSlot);
+
+// Host: E's holder can hold it no longer -- it left, or its puppet is gone -- and the clump lives
+// on. The hold ends as a still release does: the clump falls, its flight streams, and the land or
+// the rest closes the lane. Never a destroy: the entity is still in the world. A no-op when no
+// client holds E.
+void OnHolderGone(coop::element::ElementId E);
 
 // Host: E's puppet-held clump was lost with no land. Clear the hold and latch and broadcast a
 // destroy, so no client is stuck carrying a dead eid. The entity really did vanish here, so a
@@ -110,8 +115,9 @@ void ClearClientCarry(uint32_t eid);
 // Host: the host's hand, or a broom, took E during E's carry -- a churn re-grab, or a pile a throw
 // landed as taken before its land committed. Rebind E onto the new clump so the pose stream keeps
 // tracking it, cancel E's pending settle, since the re-pile was not the land, and end a client's
-// hold on E and its puppet's drive. No broadcast, no context bump. A no-op if E is not carrying.
-void OnHostRegrab(coop::element::ElementId E, void* newClump);
+// hold on E (that holder alone is told) and its puppet's drive. No broadcast, no context bump. A
+// no-op if E is not carrying.
+void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newClump);
 
 // Host: is E mid-carry? The local streams gate the held-edge rebind on it.
 bool IsCarrying(coop::element::ElementId E);

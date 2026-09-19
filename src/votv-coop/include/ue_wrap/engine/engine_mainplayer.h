@@ -34,6 +34,14 @@ void* ReadPhysicsHandleGrabbedComponent(void* phc);
 // it runs. False when `phc` is not live or the verb did not resolve. Game thread.
 bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& rotation);
 
+// Where a mainPlayer_C's first-person camera is, a puppet's included: the origin of the native
+// hold point (mainPlayer: grabHandle->SetTargetLocationAndRotation(Camera location + Camera forward
+// * grabLen, grabrot rotation)). The pawn's `grabrot` arrow is NOT offered beside it: on a puppet
+// it reads zero whatever the puppet does (measured 2026-09-19), so a puppet's carry composes the
+// hold's rotation itself. False, `out` untouched, on a dead pawn or an unresolved camera. One
+// reflected call. Game thread.
+bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out);
+
 // The AmainPlayer_C grab-state properties, read in one dispatch: grabbingActor and holdingActor
 // cover the two carry paths (the physics handle vs the chipPile/clump carry). False on a null or
 // dead pawn; `holdingActor` stays null when MainPlayer_holding_actor() is unresolved (a later

@@ -167,4 +167,8 @@ void* GetWorldContext();
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
                    float& qx, float& qy, float& qz, float& qw);
 
+// The inverse, FQuat to FRotator in UE4.27's convention (the pitch singularity handled as the
+// engine does, at +-90 degrees). The quaternion is taken as a unit one.
+FRotator QuatToRotator(float qx, float qy, float qz, float qw);
+
 }  // namespace ue_wrap::engine

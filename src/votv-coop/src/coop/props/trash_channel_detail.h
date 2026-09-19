@@ -7,12 +7,14 @@
 //
 // The HELD_BY registry (eid -> holder peer slot, the door holdOpen_ analog) is
 // OWNED by trash_grab_intent.cpp; the core never touches the map directly --
-// TickCarry / the birth prune / OnDisconnect go through these three ops.
+// TickCarry / the birth prune / the takeover / OnDisconnect go through these ops.
 // All game-thread-only, like every trash_channel entry point.
 
 #pragma once
 
 #include <cstdint>
+
+namespace coop::net { class Session; }
 
 namespace coop::trash_channel {
 
@@ -22,6 +24,10 @@ bool HeldByAny(uint32_t eid);
 // Drop `eid`'s HELD_BY record if present (land commit / dead-close / rest-close
 // end the hold; the eid becomes re-grabbable). Idempotent.
 void ClearHeldBy(uint32_t eid);
+
+// The host's hand or a broom took `eid` out of a client's carry: drop the hold and tell that
+// holder, alone, that its carry is over. A no-op when no client holds `eid`.
+void EndHoldTakenOver(coop::net::Session& s, uint32_t eid);
 
 // Gross reset of the intent lane (net disconnect): HELD_BY + the client-side
 // pending-grab / carry toggles.

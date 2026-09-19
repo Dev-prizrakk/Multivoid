@@ -705,4 +705,24 @@ void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
     qw =  cr * cp * cy + sr * sp * sy;
 }
 
+FRotator QuatToRotator(float x, float y, float z, float w) {
+    constexpr float kRadToDeg  = 57.295779513082320876798154814105f;
+    constexpr float kThreshold = 0.4999995f;   // the pitch singularity, as the engine tests it
+    const float test = z * x - w * y;
+    const float yaw  = std::atan2(2.f * (w * z + x * y), 1.f - 2.f * (y * y + z * z)) * kRadToDeg;
+    FRotator r;
+    if (test < -kThreshold) {
+        r.Pitch = -90.f; r.Yaw = yaw;
+        r.Roll  = NormalizeAxis(-yaw - 2.f * std::atan2(x, w) * kRadToDeg);
+    } else if (test > kThreshold) {
+        r.Pitch = 90.f; r.Yaw = yaw;
+        r.Roll  = NormalizeAxis(yaw - 2.f * std::atan2(x, w) * kRadToDeg);
+    } else {
+        r.Pitch = std::asin(2.f * test) * kRadToDeg;
+        r.Yaw   = yaw;
+        r.Roll  = std::atan2(-2.f * (w * x + y * z), 1.f - 2.f * (x * x + y * y)) * kRadToDeg;
+    }
+    return r;
+}
+
 }  // namespace ue_wrap::engine

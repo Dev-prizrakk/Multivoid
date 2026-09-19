@@ -309,7 +309,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     if (coop::trash_channel::IsCarrying(bornE)) {
                         // The game re-grabbed my carried entity (the just-re-piled pile morphs
                         // straight back): rebind and cancel the settle.
-                        coop::trash_channel::OnHostRegrab(bornE, heldActor);
+                        coop::trash_channel::OnHostRegrab(session, bornE, heldActor);
                         churnRegrab   = true;
                         g_lastHeldEid = bornE;
                     } else {

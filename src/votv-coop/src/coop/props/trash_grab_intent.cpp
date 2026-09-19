@@ -1,7 +1,7 @@
 // coop/props/trash_grab_intent.cpp -- the client-initiated grab and throw intent lane of
 // coop::trash_channel (see coop/props/trash_channel.h). This file owns the intent lane's whole
 // state: the holder registry (eid to holder peer slot, the door hold's analog; the core reaches
-// it through the three ops in trash_channel_detail.h) and the client-side pending-grab and
+// it through the ops in trash_channel_detail.h) and the client-side pending-grab and
 // carry toggles. The core (the context generations, the carry latch, the land settle, the
 // birth certificates, the tick) stays in trash_channel.cpp; its carry-latch read here goes
 // through the public IsCarrying.
@@ -29,6 +29,7 @@
 #include <cmath>      // clamp the inherited throw velocity
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::trash_channel {
 namespace {
@@ -36,9 +37,9 @@ namespace {
 namespace R = ue_wrap::reflection;
 
 // Eid to the peer slot whose puppet holds it through a client-initiated grab, the door hold's
-// analog: a client grab is exclusive, one holder per eid and one held eid per peer. Cleared on
-// the land commit, on the holder's disconnect, and on the disconnect reset. Host only, game
-// thread.
+// analog: a client grab is exclusive, one holder per eid and one held eid per peer. A hold spans
+// the grab to the let-go (the throw, a takeover, the holder gone), not to the land: from the
+// let-go on the open carry latch alone keeps the eid ungrabbable. Host only, game thread.
 std::unordered_map<uint32_t, uint8_t> g_heldBy;
 
 // The client-side carry state, the use-press grab-or-throw toggle. A player holds at most one
@@ -60,6 +61,21 @@ bool HeldByAny(uint32_t eid) {
 
 void ClearHeldBy(uint32_t eid) {
     g_heldBy.erase(eid);
+}
+
+void EndHoldTakenOver(coop::net::Session& s, uint32_t eid) {
+    auto it = g_heldBy.find(eid);
+    if (it == g_heldBy.end()) return;
+    const uint8_t slot = it->second;
+    g_heldBy.erase(it);
+    // The holder is told, alone: nothing else on the wire says its carry is over (the takeover
+    // sends no convert), and a client that still believes it carries spends its next use press on
+    // a throw of a clump it no longer holds.
+    coop::net::GrabRefusedPayload p{};
+    p.eid    = eid;
+    p.reason = static_cast<uint8_t>(coop::net::GrabRefusedReason::TakenOver);
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::GrabRefused, &p, sizeof(p));
+    UE_LOGI("[GRAB-INTENT] eid=%u TAKEN OVER from slot=%u -- hold ended, the holder told", eid, slot);
 }
 
 void ResetIntentState() {
@@ -131,6 +147,14 @@ void ClearClientCarry(uint32_t eid) {
 }
 
 void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId) {
+    if (reason == static_cast<uint8_t>(coop::net::GrabRefusedReason::TakenOver)) {
+        // Not an answer to a request: the host's hand or a broom took the clump out of ours.
+        const bool carried = (eid != 0u && eid == g_clientCarry);
+        if (carried) g_clientCarry = 0;
+        UE_LOGI("[GRAB-INTENT] CLIENT carry TAKEN OVER eid=%u -- %s", eid,
+                carried ? "carry ended, the next press grabs" : "not what we carry -- ignored");
+        return;
+    }
     // The LATEST request only: a refusal of an earlier request for this same eid must not end a
     // later one the host is about to perform, or the host would hold a clump for a client that
     // believes it carries nothing.
@@ -338,6 +362,42 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
             eid, clump, senderSlot);
 }
 
+// The hold on `eid` ends and its clump lives on: a throw, the holder gone. The puppet's handle lets
+// go (clearing grabbing_actor, which the clump's re-pile gate reads as its holder's hand), the
+// clump collides and reports its hits (its re-pile is fired by the ground contact), the holder
+// registry forgets it, and the drive stops steering and streams the free body until the land or the
+// rest closes the lane. The hold ends HERE and not at the land: a clump that never re-piles (it
+// came to rest on a simulating box, on a slope, before it armed) has no land, the rest closer skips
+// a held eid, and a hold kept that long refused its holder every later grab. The carry latch,
+// still open, is what keeps the eid ungrabbable in flight. The native release applies no impulse:
+// the body leaves the handle with the velocity the hold gave it.
+static void LetGo(uint32_t eid, void* puppet, void* clump) {
+    if (puppet) ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);
+    ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(clump, true);
+    ue_wrap::engine::SetActorRootCollisionEnabled(clump, /*QueryAndPhysics=*/3);
+    g_heldBy.erase(eid);
+    coop::puppet_carry_drive::NoteLetGo(static_cast<coop::element::ElementId>(eid));
+}
+
+void OnHolderGone(coop::element::ElementId E) {
+    const uint32_t eid = static_cast<uint32_t>(E);
+    auto held = g_heldBy.find(eid);
+    if (held == g_heldBy.end()) return;
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(held->second);
+    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    coop::element::Element* ce = coop::element::Registry::Get().Get(E);
+    void* ca = ce ? ce->GetActor() : nullptr;
+    if (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx())) {
+        UE_LOGI("[GRAB-INTENT] eid=%u slot=%u -- the holder is gone, the clump is let go where it is "
+                "(it falls and lands like a release)", eid, held->second);
+        LetGo(eid, puppet, ca);
+    } else {
+        // No clump to let go of. The lane stays: a settle in flight commits the land, and a clump
+        // that died with none is the carry termination's to report.
+        g_heldBy.erase(held);
+    }
+}
+
 void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
                    const ue_wrap::FVector& camFwd, uint8_t senderSlot) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
@@ -353,22 +413,17 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
     coop::element::Element* ce = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
     void* ca    = ce ? ce->GetActor() : nullptr;
     void* clump = (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx())) ? ca : nullptr;
-    if (!puppet || !clump) {
-        UE_LOGW("[THROW-INTENT] eid=%u slot=%u -- puppet/clump not live (puppet=%p clump=%p) -- releasing hold",
-                eid, senderSlot, puppet, clump);
+    if (!clump) {
+        UE_LOGW("[THROW-INTENT] eid=%u slot=%u -- clump not live -- releasing hold", eid, senderSlot);
         ReleaseClientHold(s, static_cast<coop::element::ElementId>(eid));
         return;
     }
+    if (!puppet) {
+        OnHolderGone(static_cast<coop::element::ElementId>(eid));   // a live clump is let go, never retired
+        return;
+    }
 
-    // The throw must release the puppet's grab, so the clump's re-pile gate (the holder's
-    // grabbing_actor being valid) reads not held, or it aborts the re-pile. The native release
-    // applies no impulse: the body leaves the handle with the velocity the hold gave it, and the
-    // carried clump is a simulating body on that handle, so a release writes no velocity at all.
-    // Hit notification goes on, so the flying clump generates the ground contact that fires its
-    // own re-pile graph, and the existing spawn thunk converts to-pile.
-    ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);   // clear grabbing_actor and release the physics handle
-    ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(clump, true);  // re-pile depends on the contact stream
-    ue_wrap::engine::SetActorRootCollisionEnabled(clump, /*QueryAndPhysics=*/3);  // collide + land (don't sink)
+    LetGo(eid, puppet, clump);
     ue_wrap::FVector lin = ue_wrap::engine::GetActorVelocity(clump);   // what the hold gave it: the release keeps it
     if (mode == coop::net::throw_mode::kHardThrow) {
         // The native hard throw: the launch is the engine's projectile-toss suggestion, which
@@ -376,28 +431,32 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
         // thrower's velocity, with no cap, a deliberate throw. The host holds the real clump, so it
         // reads the true mass; the camera forward is the client's at the press, so the clump flies
         // exactly where it looked; the puppet's velocity stands in for the thrower's locomotion.
+        // That forward is a client's word and becomes a velocity on a host body: one that is not
+        // finite, or not a direction, falls back to where the host sees the puppet aim.
+        ue_wrap::FVector dir = camFwd;
+        const float dirLen = std::sqrt(dir.X * dir.X + dir.Y * dir.Y + dir.Z * dir.Z);
+        if (std::isfinite(dirLen) && dirLen > 1.0e-3f)
+            dir = ue_wrap::FVector{dir.X / dirLen, dir.Y / dirLen, dir.Z / dirLen};
+        else
+            dir = rp->GetSyncedAimDirection();
         const float mass  = ue_wrap::engine::GetActorRootMass(clump);
         const float denom = (mass > 10.f) ? mass : 10.f;   // FMax(objMass, 10) -- a 0/unresolved mass floors to 10
         const float speed = 15000.f / denom;
         const ue_wrap::FVector pv = ue_wrap::engine::GetActorVelocity(puppet);
-        lin = ue_wrap::FVector{ camFwd.X * speed + pv.X, camFwd.Y * speed + pv.Y, camFwd.Z * speed + pv.Z };
+        lin = ue_wrap::FVector{ dir.X * speed + pv.X, dir.Y * speed + pv.Y, dir.Z * speed + pv.Z };
         ue_wrap::engine::SetActorRootPhysicsVelocity(clump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
     }
-    coop::puppet_carry_drive::NoteThrown(static_cast<coop::element::ElementId>(eid));  // stop hand-drive; stream the flight
     UE_LOGI("[THROW-INTENT] SUCCESS eid=%u slot=%u mode=%s clump=%p -- puppet released + physics thrown vel=(%.0f,%.0f,%.0f); "
             "clump flies + self-re-piles (thunk -> ToPile)", eid, senderSlot,
             mode == coop::net::throw_mode::kHardThrow ? "hardThrow(LMB)" : "release(E)", clump, lin.X, lin.Y, lin.Z);
 }
 
 void OnGrabHolderLeft(uint8_t senderSlot) {
-    for (auto it = g_heldBy.begin(); it != g_heldBy.end(); ) {
-        if (it->second == senderSlot) {
-            UE_LOGI("[GRAB-INTENT] OnGrabHolderLeft slot=%u -- clearing HELD_BY eid=%u + ForgetEid",
-                    senderSlot, it->first);
-            ForgetEid(static_cast<coop::element::ElementId>(it->first));  // drop a stranded carry latch/settle
-            it = g_heldBy.erase(it);
-        } else { ++it; }
-    }
+    // Collected first: letting go edits the registry this walks.
+    std::vector<uint32_t> eids;
+    for (const auto& kv : g_heldBy)
+        if (kv.second == senderSlot) eids.push_back(kv.first);
+    for (uint32_t eid : eids) OnHolderGone(static_cast<coop::element::ElementId>(eid));
 }
 
 void ReleaseClientHold(coop::net::Session& s, coop::element::ElementId E) {

@@ -1,7 +1,7 @@
 // coop/props/trash_channel.cpp -- see coop/props/trash_channel.h. The client-initiated grab and
 // throw intent lane (the senders, the host executors, the holder registry and the client carry
 // toggles) lives in trash_grab_intent.cpp; this core reaches the holder registry only through
-// the three ops in trash_channel_detail.h.
+// the ops in trash_channel_detail.h.
 
 #include "coop/props/trash_channel.h"
 
@@ -249,17 +249,19 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
     }
 }
 
-void OnHostRegrab(coop::element::ElementId E, void* newClump) {
+void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newClump) {
     if (E == 0u || E == coop::element::kInvalidId || !newClump) return;
     const uint32_t eid = static_cast<uint32_t>(E);
     if (g_carry.find(eid) == g_carry.end()) return;       // not carrying -> not a churn re-grab of E
     g_carry[eid].lastTick = g_tick;
     RebindE(E, newClump);                                 // keep E on the live held clump (the carry stream continues)
     CancelSettle(eid, "re-grab");                         // a re-grab proves the preceding re-pile was churn
-    // The host's hand or a broom took E, so a client that threw it holds it no longer: its hold and
-    // its puppet's drive end here, as the land's commit would have ended them. Kept, the hold would
-    // refuse every grab of E and the drive, finding its clump gone with no settle, would retire E.
-    ClearHeldBy(eid);
+    // The host's hand or a broom took E. A client still holding it (the host's hand can take a
+    // clump out of a puppet's: it is a simulating body like any other) holds it no longer and is
+    // told so, and its puppet's handle lets go, or two handles pull one body and the clump's re-pile
+    // gate keeps reading the puppet as its holder. A drive still streaming E's flight ends too: kept,
+    // it would find its clump gone with no settle and retire E.
+    EndHoldTakenOver(s, eid);
     coop::puppet_carry_drive::OnTakenOver(E);
     UE_LOGI("[TRASH-CH] HOST carry re-grab eid=%u -- rebound onto the new held clump, settle cancelled "
             "(churn, not the land)", eid);
@@ -327,7 +329,7 @@ bool OpenBornCarry(coop::net::Session& s, void* clump, const char* why) {
         // The pile was taken inside its own land settle: fold the re-pile as the churn a re-grab
         // is, and this clump carries the lane on. The land a thrower's hold waited for did happen --
         // the pile the broom took is that land -- so the hold ends here as the commit would have.
-        OnHostRegrab(E, clump);
+        OnHostRegrab(s, E, clump);
         return true;
     }
     RebindE(E, clump);   // bound at birth already; the rebind is idempotent and keeps the row current
@@ -470,7 +472,8 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
         }
         lane.deadTicks = 0;
         // Rest detection: only a clump lying free counts, not the local player's held clump (a
-        // still hold has no velocity) and not a puppet-held one.
+        // still hold has no velocity) and not a puppet-held one. A hold ends at the let-go, so a
+        // thrown clump is free here from the throw on.
         if (ue_wrap::prop::IsGarbageClump(a) && a != localHeldActor &&
             !HeldByAny(eid)) {
             const ue_wrap::FVector v = ue_wrap::engine::GetActorVelocity(a);

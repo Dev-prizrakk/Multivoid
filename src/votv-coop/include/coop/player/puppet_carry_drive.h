@@ -1,16 +1,17 @@
 // coop/player/puppet_carry_drive.h -- HOST-side per-tick drive of a PUPPET-held trash clump to its hand.
 //
 // When a client grabs a chipPile, the host executes playerGrabbed on that client's puppet. The grab
-// ENGAGES and HOLDS on an unpossessed puppet, but the puppet's own ReceiveTick does NOT
-// drive the PHC's per-tick SetTargetLocationAndRotation -- so the held clump FLOATS at the grab spot,
-// it never tracks to the puppet's hand. Because the host streams the clump's HOST-side pose to all
-// peers (trash_channel + PropPose), the clump must BE at the puppet's hand ON THE HOST. This module
-// kinematically positions it each tick from the puppet's synced aim -- the same kinematic drive
-// local_streams applies to the host's OWN held props (MTA CClientVehicle target-follow shape).
+// ENGAGES and HOLDS on an unpossessed puppet, on the puppet's own physics handle, but the puppet's
+// tick is off, and that tick is what feeds the handle its target every frame
+// (SetTargetLocationAndRotation) -- so the held clump hangs at the grab spot and never tracks to the
+// hand. The host streams the clump's HOST-side pose to every peer, so the clump must BE at the
+// puppet's hand ON THE HOST. This module makes the one call the puppet's tick does not: it gives
+// the handle its target each tick, from the puppet's synced aim. The clump stays a simulating body
+// on a force-limited spring, as it is in the player's own hand: what it is pushed into pushes back.
 //
 // HOST-ONLY. Game-thread only (all entries run on the net-pump game thread, like trash_channel).
 // One feature per file: NOT folded into local_streams (the LOCAL pose stream) nor trash_channel (the
-// state machine) -- this is the puppet-held kinematic follower, a subsystem of its own.
+// state machine) -- this is the puppet's handle feeder and its pose publisher, a subsystem of its own.
 
 #pragma once
 
@@ -29,25 +30,25 @@ namespace coop::puppet_carry_drive {
 // re-register for the same eid updates the clump/slot in place. Game thread.
 void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump);
 
-// HOST: the client THREW entity `eid` (its ThrowIntent ran -- the puppet grab was released + physics
-// velocity applied). Stop hand-driving the clump but KEEP streaming its physics-flight pose so every
-// client renders the throw arc, until the clump re-piles (the latch closes / a settle commits). Game thread.
-void NoteThrown(coop::element::ElementId eid);
+// HOST: entity `eid` left its holder's hand and lives on -- a throw, or a holder that is gone
+// (trash_channel has released the puppet's handle). Stop feeding the handle but KEEP streaming the
+// free body's pose, so every client renders the arc, until the carry latch closes (the land's
+// commit, or the clump at rest). Game thread.
+void NoteLetGo(coop::element::ElementId eid);
 
 // HOST: per-gameplay-tick pump (called from subsystems::TickGameplay AFTER trash_channel::TickCarry, so
 // the carry latch is current before the drive guards on IsCarrying). For each registered held clump:
 // guard (latch open, clump live, puppet live); if NOT flying, the puppet's physics handle is given its target (head + aim*grabLen);
 // then PUBLISH its pose on `s`'s host-originated TrashCarryPose queue (carry + flight). Drops the
-// entry when the clump dies, the puppet leaves, or the carry latch closes (the re-pile land). Game thread.
+// entry when the clump dies or the carry latch closes (the land, the rest); a puppet that is gone
+// lets its clump go (trash_channel::OnHolderGone) and the entry streams on as a flight. Game thread.
 void Tick(coop::net::Session& s);
 
-// HOST: the host's own hand or a broom stroke took entity `eid` from a client's carry -- a pile the
-// throw landed as, re-grabbed or swept before its land committed. End the drive without a release:
-// the entity lives on in the taker's clump, and a release would retire it everywhere. Game thread.
+// HOST: the host's own hand or a broom stroke took entity `eid` from a client's carry -- out of the
+// puppet's hand, or a pile the throw landed as, re-grabbed or swept before its land committed. The
+// puppet's handle lets go if it still holds (two handles must not pull one body) and the drive ends;
+// nothing is retired: the entity lives on in the taker's clump. Game thread.
 void OnTakenOver(coop::element::ElementId eid);
-
-// HOST: peer `slot` disconnected -- drop all its held-clump drive entries. Game thread.
-void OnPeerLeft(uint8_t slot);
 
 // HOST: full reset (net disconnect). Game thread.
 void OnDisconnect();

@@ -189,8 +189,8 @@ void RunGrabIntentTest() {
             d.store(1);
         });
     }
-    // 4b. Carry about 3 s still, so the drift metric shows the clump holding its commanded pose and
-    // the host's hand-velocity average decays, making the next press a soft release.
+    // 4b. Carry about 3 s still, so the lag metric shows the clump settled on the puppet's handle
+    // and the body is at rest, making the next press a soft release: it leaves with what it has.
     UE_LOGI("grab_intent_test: >>> STILL-CARRY 3s (L3: maxLagCm stays a few cm on a free carry; L4: a still body is released with ~0 velocity, a soft release) <<<");
     ::Sleep(3000);
 

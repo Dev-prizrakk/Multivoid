@@ -7,6 +7,7 @@
 // dereferences. The caches here are file-private plain pointers, resolved once per process.
 
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"   // GetComponentLocation (the hold frame's camera)
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -335,16 +336,31 @@ bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component)
 
 bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& rotation) {
     if (!phc || !R::IsLive(phc)) return false;
+    // Resolved once, found or not: this runs every tick of a carry, and a miss must not turn into a
+    // class and function walk per tick.
     static void* fn = nullptr;
-    if (!fn) {
+    static bool  tried = false;
+    if (!tried) {
+        tried = true;
         if (void* cls = R::FindClass(P::name::PhysicsHandleComponentClass))
             fn = R::FindFunction(cls, P::name::SetTargetLocationAndRotationFn);
+        if (!fn) UE_LOGW("engine::SetPhysicsHandleTarget: PhysicsHandleComponent.SetTargetLocationAndRotation unresolved -- a puppet's carried clump will not follow its hand");
     }
     if (!fn) return false;
     ParamFrame f(fn);
     f.SetRaw(L"NewLocation", &location, sizeof(location));
     f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
     return Call(phc, f);
+}
+
+bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    const int32_t camOff = ue_wrap::reflected_offset::MainPlayer_Camera();
+    if (camOff < 0) return false;
+    void* cam = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + camOff);
+    if (!cam || !R::IsLive(cam)) return false;
+    out = GetComponentLocation(cam);
+    return true;
 }
 
 void* ReadMainPlayerGrabHandle(void* mainPlayer) {

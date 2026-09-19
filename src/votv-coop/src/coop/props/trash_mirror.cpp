@@ -131,8 +131,7 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     SkinTrashNative(native, chipType, rot, scale);
     // A clump renders in a hand: it is the carried form, driven to a puppet's hand by the pose
     // stream with no holder to be attached to, so its collision would block the very player
-    // carrying it. The throw path turns physics and collision back on for the flight, and the
-    // landed form is a pile with the game's own collision.
+    // carrying it. The landed form is a pile with the game's own collision.
     // Presentation, not a parking: a clump renders in a hand or on a host-driven flight path, and
     // on the authoritative peer the game itself holds it, so there is no moment at which local
     // collision would be right.
