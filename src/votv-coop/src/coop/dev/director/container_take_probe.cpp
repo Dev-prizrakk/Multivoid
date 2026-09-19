@@ -201,125 +201,6 @@ void RunVerifierBlindControl() {
             ran->load() == 1 ? "UNRESOLVABLE" : "resolvable");
 }
 
-// Does saveObjects refresh the save-side projection on a peer whose world save is blocked at the
-// SaveGameToSlot seam? Watching for the absence of a log line fuses two causes (never
-// refreshed, or this record does not go there), so this samples positively: each sample counts
-// the rows of inventoryData, equipment and hold and hashes their content, and a refresh shows
-// as a changed sample. Run on both peers: the host, whose saves are not blocked, is the known
-// positive, and the client arm is interpretable only once the host arm moved.
-std::array<uint64_t, 4> SampleProjection() {
-    auto st = std::make_shared<std::array<uint64_t, 4>>();
-    (*st)[3] = ~0ull;
-    RunGT([st](std::atomic<int>& d) {
-        INV::PlayerInventory pinv;
-        if (!INV::ReadAll(pinv)) { d.store(1); return; }
-        uint64_t h = 1469598103934665603ull;
-        auto mix = [&h](const std::wstring& s) {
-            for (wchar_t c : s) { h ^= static_cast<uint64_t>(c); h *= 1099511628211ull; }
-            h ^= '|'; h *= 1099511628211ull;
-        };
-        for (const auto& r : pinv.inventory) { mix(r.className); mix(r.key); }
-        for (const auto& e : pinv.equipment) { mix(e.data.className); mix(e.data.key); }
-        for (const auto& e : pinv.hold)      { mix(e.data.className); mix(e.data.key); }
-        (*st)[0] = pinv.inventory.size(); (*st)[1] = pinv.equipment.size();
-        (*st)[2] = pinv.hold.size();      (*st)[3] = h;
-        d.store(1);
-    });
-    return *st;
-}
-
-// Two questions kept apart: does saveObjects propagate the live store to the projection, and
-// does the game call it on a client whose save is blocked. The second needs a real autosave
-// (one attempt waited minutes for one that never fired), so this calls the verb directly:
-// saveObjects is a plain UFunction on the gamemode and does not reach SaveGameToSlot. Each peer
-// runs it after taking an item, so each is its own known positive. The live player slice
-// (GObjStack[0], where a container take lands) is sampled beside the projection, so the gap is
-// visible per sample.
-int32_t SampleLivePlayerSliceRows() {
-    auto n = std::make_shared<std::atomic<int>>(-1);
-    RunGT([n](std::atomic<int>& d) {
-        void* save = INV::ResolveSaveSlot();
-        if (!save) { d.store(1); return; }
-        const int32_t off = R::FindPropertyOffset(R::ClassOf(save), L"GObjStack");
-        if (off < 0) { d.store(1); return; }
-        const SR::Arr outer = SR::ReadArr(save, off);
-        if (outer.num <= 0) { d.store(1); return; }
-        n->store(SR::ReadArr(outer.data, 0).num);   // slice 0 = where a container take lands (measured)
-        d.store(1);
-    });
-    return n->load();
-}
-
-void RunProjectionWatch(const std::string& role) {
-    // Passive by default: sampling only. Whether the host refreshes organically and whether the
-    // live-versus-projection gap grows are answered by watching, and watching must not perturb.
-    constexpr int kSamples    = 16;
-    constexpr int kIntervalMs = 20000;   // ~5 min -- long enough to span an organic autosave if one fires
-    UE_LOGI("director/projwatch: role=%s PASSIVE watch -- %d samples every %d s. Each line pairs the "
-            "save-side projection with the LIVE player slice (GObjStack[0]); gap = live - projection. "
-            "A projection change with NO forced call = the game ran saveObjects organically (Q2). A gap "
-            "that is constant = an ORIGIN mismatch, not accumulation (Q3).",
-            role.c_str(), kSamples, kIntervalMs / 1000);
-    for (int i = 0; i < kSamples; ++i) {
-        const auto p = SampleProjection();
-        const int32_t live = SampleLivePlayerSliceRows();
-        UE_LOGI("director/projwatch: role=%s sample=%02d proj_inv=%llu eq=%llu hold=%llu hash=%016llx "
-                "| live_slice0=%d | gap=%lld",
-                role.c_str(), i, static_cast<unsigned long long>(p[0]), static_cast<unsigned long long>(p[1]),
-                static_cast<unsigned long long>(p[2]), static_cast<unsigned long long>(p[3]), live,
-                static_cast<long long>(live) - static_cast<long long>(p[0]));
-        if (i + 1 < kSamples) ::Sleep(kIntervalMs);
-    }
-
-    // The perturbing half, opt-in (VOTVCOOP_PROJWATCH_FORCE). Calling saveObjects is not read-only
-    // even without the disk seam: it refreshes inventoryData, the inventory lane polls that array
-    // and streams on a hash change, and the host persists the blob to the per-player JSON. One
-    // call rewrote a client's inventory file.
-    if (!coop::config::ReadEnv("VOTVCOOP_PROJWATCH_FORCE").empty()) {
-        UE_LOGW("director/projwatch: role=%s FORCE enabled -- calling saveObjects; this WILL rewrite "
-                "coop_players/<guid>.json via the inventory lane's stream+persist. Not read-only.",
-                role.c_str());
-    } else {
-        UE_LOGI("director/projwatch: role=%s DONE (passive; set VOTVCOOP_PROJWATCH_FORCE=1 for the "
-                "perturbing saveObjects call -- it rewrites the per-player JSON)", role.c_str());
-        return;
-    }
-
-    const auto pre = SampleProjection();
-    UE_LOGI("director/projwatch: role=%s PRE  inv=%llu eq=%llu hold=%llu contentHash=%016llx",
-            role.c_str(), static_cast<unsigned long long>(pre[0]), static_cast<unsigned long long>(pre[1]),
-            static_cast<unsigned long long>(pre[2]), static_cast<unsigned long long>(pre[3]));
-
-    auto called = std::make_shared<std::atomic<int>>(0);
-    RunGT([called](std::atomic<int>& d) {
-        void* gm = R::FindObjectByClass(L"mainGamemode_C");
-        void* fn = gm ? R::FindFunction(R::ClassOf(gm), L"saveObjects") : nullptr;
-        if (!gm || !fn) { called->store(0); d.store(1); return; }
-        ue_wrap::ParamFrame pf(fn);
-        if (!pf.valid()) { called->store(0); d.store(1); return; }
-        pf.Set<bool>(L"quicksave", false);
-        called->store(ue_wrap::Call(gm, pf) ? 1 : 0);
-        d.store(1);
-    });
-    UE_LOGI("director/projwatch: role=%s called mainGamemode::saveObjects(quicksave=false) -> %s "
-            "(no SaveGameToSlot, so no disk write)",
-            role.c_str(), called->load() ? "OK" : "FAILED/NOT-RESOLVED");
-
-    ::Sleep(1500);   // let the verb's own work settle before re-reading
-    const auto post = SampleProjection();
-    UE_LOGI("director/projwatch: role=%s POST inv=%llu eq=%llu hold=%llu contentHash=%016llx",
-            role.c_str(), static_cast<unsigned long long>(post[0]), static_cast<unsigned long long>(post[1]),
-            static_cast<unsigned long long>(post[2]), static_cast<unsigned long long>(post[3]));
-
-    const bool moved = (pre != post);
-    UE_LOGI("director/projwatch: role=%s VERDICT saveObjects %s the projection (call=%s) -- this peer "
-            "had JUST taken an item into its live store, so it is its OWN known-positive: CHANGED = the "
-            "projection tracks the live store when the verb runs; UNCHANGED with call=OK = it does NOT, "
-            "and the lane's poll of inventoryData cannot see a container take at all",
-            role.c_str(), moved ? "CHANGED" : "did NOT change", called->load() ? "OK" : "FAILED");
-    UE_LOGI("director/projwatch: role=%s DONE", role.c_str());
-}
-
 void RunContainerTakeProbe() {
     // First, before any settle: the instrument's own known positive.
     RunVerifierBlindControl();
@@ -700,8 +581,6 @@ void RunContainerRace() {
             "| X(cls=%ls key=%ls) | mp.py sums across peers: 1=correct 2=DUP(R11b) 0=VANISHED >2=worse",
             role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB,
             pb->xSig.className.c_str(), pb->xSig.key.c_str());
-
-    RunProjectionWatch(role);
 }
 
 DWORD WINAPI ContainerRaceThread(LPVOID /*arg*/) {

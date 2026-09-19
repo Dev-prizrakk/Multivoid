@@ -3,8 +3,7 @@
 //
 // The join scratch-save is save_transfer.cpp -> save_capture::CaptureLiveWorldToScratchSlot ->
 // mainGamemode.saveObjects; a manual save takes the BP save()/autosave() path the mod never
-// calls, so the two are cleanly discriminable. (One other direct caller exists, the director
-// probe in coop/dev/director, off unless VOTVCOOP_PROJWATCH_FORCE is set.)
+// calls, so the two are cleanly discriminable.
 //
 // It DETECTS ONLY -- nothing here suppresses the indicator. The candidate painters, saveAnim
 // and "Add Hint from Gamemode" (addHint), are called BP-INTERNALLY inside saveObjects

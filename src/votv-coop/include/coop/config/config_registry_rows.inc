@@ -315,8 +315,6 @@ CFG_FLAG(atv_corrector, "atv_corrector", "dev", true, "VOTVCOOP_ATV_CORRECTOR",
     "withheld, so the two arms differ in exactly one thing.")
 CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullptr,
     "Diagnostic probe: native pile inertness on clients.")
-CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,
-    "Diagnostic probe: inventory store contents.")
 CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
     "Diagnostic probe: actor spawn ordering.")
 CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, nullptr,

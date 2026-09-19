@@ -387,8 +387,8 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/input_focus_probe.cpp
     src/coop/dev/leak_probe.cpp
     src/coop/dev/heap_probe.cpp
-    src/coop/dev/inventory_probe.cpp
     src/coop/dev/live_store_readout.cpp
+    src/coop/dev/inventory_pickup_drill.cpp
     src/coop/dev/drone_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp

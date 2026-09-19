@@ -45,7 +45,7 @@
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
-#include "coop/dev/inventory_probe.h"  // SP self-test for the apply (engine write) path
+#include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through putObjectInventory2
 #include "coop/dev/live_store_readout.h"  // READ-ONLY live personal store observability
 #include "coop/dev/sleep_probe.h"
 #include "coop/voice/voice_chat.h"
@@ -615,8 +615,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // inventory read-verify self-test (no-op unless inventory_selftest=1)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_probe"}; coop::dev::inventory_probe::Tick(); }  // SP apply round-trip self-test (no-op unless inventory_probe=1)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) + the by-content gap vs the projection (no-op unless live_store_readout=1)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) by content (no-op unless live_store_readout=1)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
     // The trash pile collect-counter poll and depletion death-watch; a chipPile re-grab fires from
     // the use-press observer that trash_collect_sync installs, not from a per-tick liveness sweep.
     { PP::Scope _s{PP::Bucket::TrashWatch};
