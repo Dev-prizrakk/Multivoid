@@ -3,6 +3,7 @@
 #include "coop/dev/live_store_readout.h"
 
 #include "coop/config/config.h"
+#include "record_digest.h"   // co-located private header (src tree, not include/)
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
 
@@ -132,6 +133,14 @@ void Tick() {
     }
 
     Bag carried = BagOf(inv.inventory);
+    // The carried records' VALUES, one line each: the shape in the signature is a class
+    // fingerprint, and whether a disc kept its data across a rejoin is a question about values.
+    std::vector<std::string> values;
+    values.reserve(inv.inventory.size());
+    for (const auto& r : inv.inventory)
+        values.push_back(Narrow(r.className) + "|" + Narrow(r.key) + ": " +
+                         coop::dev::record_digest::ValuesOf(r));
+    std::sort(values.begin(), values.end());
     Bag worn;
     size_t eqFilled = 0, holdFilled = 0;
     for (const auto& e : inv.equipment)
@@ -142,7 +151,8 @@ void Tick() {
     // Log only when something CHANGED -- a per-2s heartbeat of an unchanged state is log spam, and
     // the pre-deploy checklist treats a line repeating at a rate the design did not intend as a bug.
     static std::string s_last;
-    const std::string now = StateKey(carried, worn);
+    std::string now = StateKey(carried, worn);
+    for (const auto& v : values) now += ";V" + v;
     if (now == s_last) return;
     const bool first = s_last.empty();
     s_last = now;
@@ -152,6 +162,8 @@ void Tick() {
             holdFilled, inv.hold.size());
     UE_LOGI("live_store:   carried: %s", Join(carried).c_str());
     UE_LOGI("live_store:   worn/held: %s", Join(worn).c_str());
+    for (size_t i = 0; i < values.size() && i < kMaxDiffLines; ++i)
+        UE_LOGI("live_store:   values %s", values[i].c_str());
 }
 
 }  // namespace coop::dev::live_store_readout

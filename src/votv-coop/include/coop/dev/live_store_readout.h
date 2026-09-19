@@ -5,7 +5,9 @@
 // What a player carries lives in saveSlot.GObjStack[0] and what they wear and hold in
 // saveSlot.equipment / hold; the inventory lane moves exactly those three. This prints them BY
 // CONTENT -- class, save key, payload shape -- on change, which is how "the joiner carries the
-// host's items under the host's keys" was measured, and how a rejoin is checked against it.
+// host's items under the host's keys" was measured, and how a rejoin is checked against it. Each
+// carried record also gets a `values` line of per-group hashes (coop/dev/record_digest.h), since
+// the shape cannot say whether a disc or a drive kept the DATA it holds.
 //
 // Read-only by construction: it calls ue_wrap::inventory::ReadAll, field reads only, and no
 // UFunction. An earlier probe here called mainGamemode::saveObjects to
