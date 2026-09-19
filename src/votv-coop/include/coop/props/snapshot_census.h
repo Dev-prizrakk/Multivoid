@@ -29,9 +29,9 @@ namespace coop::snapshot_census {
 //
 // It rides as a tail on the existing SnapshotComplete message rather than a new ReliableKind, so
 // the budget is whatever is left of the 228-byte reliable payload; ordering by count keeps the mass
-// classes inside it, and an omitted tail is logged rather than dropped silently. Only chipPile
-// classes are counted -- IsChipPile is a class-lineage test with no per-object string allocation on
-// the walk. Keyed interactables are claimed by their stable key instead and stay backstopped by the
+// classes inside it, and an omitted tail is logged rather than dropped silently. Only trash
+// classes are counted, a pile's and a clump's -- IsTrashActor is a class-lineage test with no
+// per-object string allocation on the walk. Keyed interactables are claimed by their stable key instead and stay backstopped by the
 // >50% valve, and the client floor below is already per-class and general.
 int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes);
 

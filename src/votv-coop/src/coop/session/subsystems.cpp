@@ -130,6 +130,7 @@
 #include "coop/creatures/piramid_sync.h"  // piramid event choreography lane (mirror brain suppression + PyramidGather)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/pile_spawn_bind.h"       // OnDisconnect: a client's own parked clumps go back to the game
 #include "coop/props/prop_element_tracker.h"  // reseed hub consumer install + drain
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_snapshot.h"
@@ -397,6 +398,7 @@ DisconnectStats DisconnectAll() {
     // live mirror and no stale drive entry.
     coop::trash_mirror::OnDisconnect();
     coop::pile_look::OnDisconnect();
+    coop::pile_spawn_bind::OnDisconnect();   // this client's own parked clumps go back to the game, before ForceRelease
     coop::remote_prop::ForceRelease();
     // A disconnect mid-snapshot drops the armed claim set (dangling actor pointers must not survive
     // into the next session); no sweep.

@@ -52,6 +52,11 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
                       int senderSlot,
                       const std::unordered_set<void*>& claimed);
 
+// The session is over: every clump of this client's own that a bind parked gets its tick and its
+// physics back, and its drive cleared. Called BEFORE remote_prop::ForceRelease, which destroys a
+// driven clump as a mirror nobody owns. Game thread.
+void OnDisconnect();
+
 // Adopt `native` as the mirror of `eid`: claim it for the membership sweep (a no-op outside a
 // bracket), retire its client-local identity, register it as the mirror and mark it save-native,
 // which is the flag the grab route, the morph hand-off, the sweep exemption and the retire all

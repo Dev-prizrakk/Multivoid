@@ -128,7 +128,7 @@ int SweepReconcileSaveTimeTwins() {
     if (g_pendingSaveTimeTwin.empty()) return 0;
     const size_t pendingN = g_pendingSaveTimeTwin.size();
 
-    // A fresh walk of the live unbound native chipPiles, the candidate stale twins: the world-ready
+    // A fresh walk of the live unbound native trash actors, piles and clumps, the candidate twins: the world-ready
     // index predates these async loads, and stored internal indices go stale across a purge. A
     // bound native is the mirror, never a twin.
     struct LiveNative { void* actor; int32_t idx; float x, y, z; uint8_t chipType; bool isClump; };
@@ -319,9 +319,15 @@ void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector
     PendingTwin twin{savePos.X, savePos.Y, savePos.Z, chipType};
     twin.wantClump = wantClump;
     g_pendingSaveTimeTwin[static_cast<uint32_t>(eid)] = twin;
-    UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u "
+    UE_LOGI("[PILE-09] CLIENT armed pending save-time twin eid=%u key=(%.1f,%.1f,%.1f) chipType=%u form=%s "
             "(in-window grabbed/moved or world-ready-miss pile -> sweep retires the stale native@old at quiescence)",
-            static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType));
+            static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z, static_cast<unsigned>(chipType),
+            wantClump ? "clump" : "pile");
+}
+
+bool HasPendingSaveTimeTwin(coop::element::ElementId eid) {
+    auto it = g_pendingSaveTimeTwin.find(static_cast<uint32_t>(eid));
+    return it != g_pendingSaveTimeTwin.end() && !it->second.hostVacate;
 }
 
 void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& oldPos) {

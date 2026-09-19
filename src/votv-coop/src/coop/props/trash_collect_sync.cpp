@@ -66,9 +66,9 @@ bool g_repileThunkInstalled = false;          // process-lifetime Func-patch lat
 
 // The classes that made a clump of no pile this session, each logged once. The game does that
 // outside the grab and the broom -- an angry erie flesh, a kerfus possessor and an erie plush spawn
-// clumps from their own graphs -- and such a clump has no identity to move onto it, so its flight is
-// this host's alone and the pile it lands as crosses when the adoption scan finds it
-// (docs/piles.md, Known limits).
+// clumps from their own graphs -- and such a clump has no identity at its BIRTH, so its first
+// flight is this host's alone; the adoption scan enrols it where it lies, as it does any clump at
+// rest, and every peer then gets it under that id (docs/piles.md, Known limits).
 std::vector<std::wstring> g_pilelessClumpSources;
 
 // A clump was just born of `pile` (a grab's spawn, or a broom stroke's copy of the pile's morph):
@@ -172,8 +172,8 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
         std::wstring source = R::ClassNameOf(srcObj);
         if (std::find(g_pilelessClumpSources.begin(), g_pilelessClumpSources.end(), source) ==
             g_pilelessClumpSources.end()) {
-            UE_LOGI("[PILE] HOST clump %p made by '%ls' of no pile -- no identity to carry, so its "
-                    "flight is this host's alone until it lands (said once per class)", newActor,
+            UE_LOGI("[PILE] HOST clump %p made by '%ls' of no pile -- no identity at its birth, so its "
+                    "first flight is this host's alone; the census enrols it at rest (said once per class)", newActor,
                     source.c_str());
             g_pilelessClumpSources.push_back(std::move(source));
         }

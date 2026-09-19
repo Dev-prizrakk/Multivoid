@@ -57,6 +57,12 @@ struct PileBindCandidate {
 std::vector<PileBindCandidate> g_pileBindIndex;
 bool g_pileBindIndexBuilt = false;
 int  g_pileBindCount = 0;  // per-bracket bind counter (throttles the log)
+
+// This client's own clumps that a bind parked (tick and physics off). They are the CLIENT's actors
+// and outlive the session in its world, so the disconnect gives both back. Session-scoped, not
+// bracket-scoped: Reset leaves it alone.
+struct ParkedClump { void* actor; int32_t idx; };
+std::vector<ParkedClump> g_parkedClumps;
 int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orphan-census valve denominator:
                                  // leftovers / built = the host-drift fraction; a huge fraction = wire loss,
                                  // not divergence -> the census/removal must refuse it, like the >50%% sweep valve)
@@ -187,7 +193,7 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
         return nullptr;
     };
     if (matchCount > 1) {
-        UE_LOGW("[PILE] BIND SKIP eid=%u at (%.1f,%.1f,%.1f) -- %d native chipPile twins within "
+        UE_LOGW("[PILE] BIND SKIP eid=%u at (%.1f,%.1f,%.1f) -- %d native twins of the row's form within "
                 "1cm (ambiguous cluster) -> binding none (never bind the wrong one)",
                 payload.elementId, matchPos.X, matchPos.Y, matchPos.Z, matchCount);
         return armAndFail("an ambiguous cluster");
@@ -241,6 +247,7 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
     if (ue_wrap::prop::IsGarbageClump(native)) {
         ue_wrap::engine::SetActorTickEnabled(native, false);      // a clump's tick wakes its body every second
         ue_wrap::engine::SetActorSimulatePhysics(native, false);  // kinematic: the host drives it
+        g_parkedClumps.push_back({native, R::InternalIndexOf(native)});
     }
     // The claim: this actor was expressed on the wire this bracket, so the membership sweep must
     // not destroy it. Without it an entire host-expressed class claims zero and the sweep's
@@ -260,6 +267,25 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
         UE_LOGI("[PILE] BIND #%d eid=%u -> OWN save-loaded native %p at (%.1f,%.1f,%.1f) [%s]",
                 g_pileBindCount, eid, native, at.X, at.Y, at.Z, why);
     }
+}
+
+void OnDisconnect() {
+    // With no session nobody authors these bodies but this client: a clump left kinematic with its
+    // tick off would hang where the host last put it and refuse the game's own pickup, which wants
+    // a simulating body. One that turned back into a pile in the meantime is dead by index.
+    int restored = 0;
+    for (const ParkedClump& c : g_parkedClumps) {
+        if (!R::IsLiveByIndex(c.actor, c.idx)) continue;
+        coop::remote_prop::ClearAnyDriveFor(c.actor);   // before ForceRelease, which destroys a driven clump
+        ue_wrap::engine::SetActorTickEnabled(c.actor, true);
+        ue_wrap::engine::SetActorSimulatePhysics(c.actor, true);
+        ++restored;
+    }
+    if (!g_parkedClumps.empty())
+        UE_LOGI("[PILE] pile_spawn_bind: OnDisconnect gave %d of %zu parked own clump(s) back to the game "
+                "(tick and physics on)", restored, g_parkedClumps.size());
+    g_parkedClumps.clear();
+    Reset();
 }
 
 void LogCensus() {

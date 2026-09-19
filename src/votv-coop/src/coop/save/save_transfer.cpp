@@ -782,14 +782,15 @@ void TickPileFlushLateArm() {
             // full-array sweeps, a hitch storm during pile play. The late flush is the maps' last
             // consumer: at its expiry the joiner has quiesced and reconciled, and a late kerfur
             // turn-on resolves by eid.
-            if (!g_blobPileXforms[slot].empty() || !g_blobKerfurXforms[slot].empty() ||
-                !g_blobKeyedXforms[slot].empty()) {
+            if (!g_blobPileXforms[slot].empty() || !g_blobClumpXforms[slot].empty() ||
+                !g_blobKerfurXforms[slot].empty() || !g_blobKeyedXforms[slot].empty()) {
                 UE_LOGI("[PILE-09] slot %d join window CLOSED (b3 late-flush expiry) -- retiring "
-                        "save-time maps (%zu pile + %zu kerfur + %zu keyed xform(s)); steady-state grabs no "
-                        "longer stamp save-time keys for this joiner",
-                        slot, g_blobPileXforms[slot].size(), g_blobKerfurXforms[slot].size(),
-                        g_blobKeyedXforms[slot].size());
+                        "save-time maps (%zu pile + %zu clump + %zu kerfur + %zu keyed xform(s)); steady-state "
+                        "grabs no longer stamp save-time keys for this joiner",
+                        slot, g_blobPileXforms[slot].size(), g_blobClumpXforms[slot].size(),
+                        g_blobKerfurXforms[slot].size(), g_blobKeyedXforms[slot].size());
                 g_blobPileXforms[slot].clear();
+                g_blobClumpXforms[slot].clear();
                 g_blobKerfurXforms[slot].clear();
                 g_blobKeyedXforms[slot].clear();
             }
@@ -964,6 +965,7 @@ void OnDisconnect() {
         g_host[slot] = HostStream{};
         g_blobKeys[slot].clear();  // no blob baseline survives a session end
         g_blobPileXforms[slot].clear();  // nor the save-time maps
+        g_blobClumpXforms[slot].clear();
         g_blobKerfurXforms[slot].clear();
         g_blobKeyedXforms[slot].clear();
         g_pileFlushArmUntil[slot] = {};

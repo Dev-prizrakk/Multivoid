@@ -94,6 +94,18 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
         return cur;
     }
 
+    // A to-clump for an eid with NO actor here and a pending bind: the clump's row missed this
+    // client's own copy (the async load tail had not spawned it yet) and armed the late bind, and
+    // this convert is the generation that rides behind every clump row. Standing a mirror up now
+    // would put a second clump beside the copy the load is about to bring, and the late bind, finding
+    // the eid bound at its key, would never claim that copy. The generation is adopted above; the
+    // late bind owns the actor.
+    if (wantClump && !cur && coop::element::quiescence_drain::HasPendingSaveTimeTwin(E)) {
+        UE_LOGI("[PILE] CLIENT convert %s eid=%u ctx=%u -- generation adopted; the actor is the pending own-native "
+                "bind's (no mirror spawned beside it)", edge, E, static_cast<unsigned>(payload.ctx));
+        return nullptr;
+    }
+
     // The form changes. The payload's class is the successor's own class on both edges, so it
     // names what to spawn. Materialize binds E onto it in place, which is the identity migrating
     // at the successor's BIRTH, before the predecessor dies.

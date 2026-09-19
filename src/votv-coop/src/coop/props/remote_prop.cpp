@@ -121,6 +121,17 @@ void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
 // Every release-shaped physics re-enable (PropRelease, the stream-stop timeout, the switched-prop
 // release) is gated on the stick state: a wall-attachable that stuck while held stays frozen when
 // the sender's hold breaks, or the host watches the camera fall off the wall.
+// A trash body whose pose the HOST authors on this peer: a mirror we spawned, or this client's own
+// save-loaded clump bound to the host's eid (parked at the bind: tick and physics off). Neither
+// goes back to local physics when a drive ends -- a stream gap, the peer's hand moving on, a
+// release: it would roll and be pushed on this peer alone. A bound PILE is not in this set: it is
+// a Static, inert actor, and the 500 ms release is what un-sticks it if a reliable edge is lost.
+bool HostAuthorsTrashBody(void* actor) {
+    if (!actor) return false;
+    if (coop::trash_mirror::WeMade(actor)) return true;
+    return ue_wrap::prop::IsGarbageClump(actor) && coop::prop_element_tracker::IsBoundMirrorNative(actor);
+}
+
 bool StickHoldsPhysicsOff(void* actor) {
     return actor && ue_wrap::prop::IsDescendantOfProp(actor) &&
            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
@@ -221,10 +232,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     g_drives[slot].lastEid = pose.elementId;
     // A host-authoritative trash mirror freezes on a stream gap instead of timing out; it releases
     // only on the explicit reliable edge, and it interpolates rather than snapping. The test is
-    // whether WE made the actor, not what class it is: a client's own save-loaded pile is bound as
-    // a mirror too, and suppressing its 500 ms implicit release would leave it kinematic and
-    // drive-held for the session if the reliable edge never arrived.
-    g_drives[slot].isTrashMirror = coop::trash_mirror::WeMade(prop);
+    // whether the host authors this body (HostAuthorsTrashBody), not what class it is: a client's
+    // own save-loaded PILE is bound as a mirror too, and suppressing its 500 ms implicit release
+    // would leave it kinematic and drive-held for the session if the reliable edge never arrived.
+    g_drives[slot].isTrashMirror = HostAuthorsTrashBody(prop);
     // A fresh identity: the next pose primes (a snap, no drift-in from the rest position), later
     // poses interpolate.
     g_drives[slot].lerpSeeded   = false;
@@ -266,7 +277,7 @@ void Tick(coop::net::Session& session) {
                     // physics unless a stick froze it mid-hold.
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
                     void* liveA = drive.LiveActor();
-                    if (!StickHoldsPhysicsOff(liveA))
+                    if (!StickHoldsPhysicsOff(liveA) && !HostAuthorsTrashBody(liveA))
                         DriveTogglePhysics(liveA, drive.mesh, true);
                     ResetDriveState(drive);
                 }
@@ -373,7 +384,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // A thrown trash mirror is not simulated here: local physics would diverge from the host's
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
     // the release pose until that stream or the host's ToPile convert moves it; the swing plays.
-    if (propActor && coop::trash_mirror::WeMade(propActor)) {
+    if (propActor && HostAuthorsTrashBody(propActor)) {
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold)
             coop::prop_sound::PlayThrowWhoosh(propActor);
         if (propActor) ClearAnyDriveFor(propActor);  // stop the carry drive; freeze in place

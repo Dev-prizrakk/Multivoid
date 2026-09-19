@@ -25,8 +25,8 @@ bool g_have = false;
 int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes) {
     // INDEPENDENT of the expression path: a raw GUObjectArray walk sees every live actor whether or
     // not it is in the Prop Element registry. The 11:16 root was untracked piles MISSING from the
-    // registry -> never expressed; they are still counted here. IsChipPile is a cheap class-hierarchy
-    // test (no per-object string alloc); ClassNameOf runs only for the actual chipPiles.
+    // registry -> never expressed; they are still counted here. IsTrashActor is a cheap class-hierarchy
+    // test (no per-object string alloc); ClassNameOf runs only for the actual piles and clumps.
     std::unordered_map<std::wstring, uint32_t> byClass;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
