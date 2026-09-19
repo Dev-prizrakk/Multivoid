@@ -37,9 +37,10 @@ struct Call {
 };
 
 // The watch surface follows the Watch that Relay, Moddy's VOTV mod, publishes in its README: a
-// pre phase that may cancel the call, a post phase that only observes, and the calling Blueprint
-// frame handed to both. Relay's README says cancellation rewrites the function's bytecode; this
-// gate leaves the bytecode alone and refuses the body at the loop. Links: docs/credits.md.
+// pre phase, a cancelable form that can stop the call, a post phase that only observes, and the
+// calling Blueprint frame handed to the handler. Relay's README says cancellation rewrites the
+// function's bytecode; this gate leaves the bytecode alone and refuses the body at the loop.
+// Links: docs/credits.md.
 // Cancel skips the body: the return value and every out parameter keep whatever the caller
 // initialised them to, and the post callbacks do not fire. Run executes it.
 enum class Verdict : uint8_t { Run, Cancel };
