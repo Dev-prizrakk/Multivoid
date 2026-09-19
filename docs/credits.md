@@ -340,7 +340,7 @@ are this project's own.
 
 **The object index, and a correction (b160).** An earlier version of this page credited Relay's
 README for the fact that the engine reports every object's creation and destruction to registered
-listeners. That credit was wrong: the mechanism is Unreal Engine's own -- `FUObjectArray` keeps a
+listeners. It should not have: the mechanism is Unreal Engine's own -- `FUObjectArray` keeps a
 list of create listeners and a list of delete listeners -- and nothing Relay publishes describes it.
 This project came to it by examining Relay's closed DLL, by looking at which engine facilities it
 links against, in work since withdrawn at Moddy's request. The engine mechanism stays, with the
