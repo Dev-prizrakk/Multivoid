@@ -34,7 +34,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a pre callback that reads the parameters and can cancel the call and a post callback that reads the result, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; and the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b153 · b160 |
+| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; and the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
@@ -263,16 +263,16 @@ public repo, an un-annotated superseded decision is ammunition.
 
 **Relay.** Moddy is also the author of [Relay](https://github.com/modestimpala/Relay), a Blueprint
 networking API for Voices of the Void
-([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)). Relay is closed
-source; its README, and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that
+([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)). Relay ships as a
+compiled mod; its README, and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that
 README links, publish a good deal of its design. Everything in the seven paragraphs below was taken
 from those two public pages and is used with attribution, which is what Moddy asks for what those
 pages state. No code or asset of Relay's is in this repository, and every mechanism named below is
 this project's own.
 
 **The script-body gate (b160).** *Source: the README, "Watch and integration API".* Relay's README
-describes a Watch on a Blueprint function: a pre phase that reads the call's parameters and may
-cancel the call, a post phase that only observes, and the calling Blueprint frame handed to the
+describes a Watch on a Blueprint function: a pre phase that reads the call's parameters, a
+cancelable form that can stop the call, a post phase that only observes, and the calling Blueprint frame handed to the
 handler. Before this, a call one Blueprint made to another was observe-only here: the seam sat at
 the call site and saw neither the arguments nor a way to refuse. Multivoid now detours the one
 engine function every Blueprint body runs through, the VM's script loop, and offers that surface
@@ -344,9 +344,9 @@ listeners. That credit was wrong: the mechanism is Unreal Engine's own -- `FUObj
 list of create listeners and a list of delete listeners -- and nothing Relay publishes describes it.
 This project came to it by examining Relay's closed DLL, by looking at which engine facilities it
 links against, in work since withdrawn at Moddy's request. The engine mechanism stays, with the
-pointers Moddy asked for: UE4SS, which is open source, registers on the same two lists in
+pointers Moddy asked for: UE4SS, which is open source, registers on both lists in
 [`LiveView.cpp`](https://github.com/UE4SS-RE/RE-UE4SS/blob/7f7cc36f8cdc082566cd676acc26975a22a41aaa/UE4SS/src/GUI/LiveView.cpp#L809-L810)
-and
+and on the delete list in
 [`LuaMod.cpp`](https://github.com/UE4SS-RE/RE-UE4SS/blob/7f7cc36f8cdc082566cd676acc26975a22a41aaa/UE4SS/src/Mod/LuaMod.cpp#L5728).
 Multivoid's object index (`ue_wrap/core/object_index`, on `ue_wrap/core/uobject_listeners`) appends
 to those lists directly, with the member layout from RE-UE4SS, and the shared discovery pass reads
