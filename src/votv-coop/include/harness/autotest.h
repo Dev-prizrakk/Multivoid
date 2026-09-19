@@ -56,6 +56,11 @@ DWORD WINAPI GrabIntentTestThread(LPVOID arg);
 void RunHostThrowScenario();
 DWORD WINAPI HostThrowThread(LPVOID arg);
 
+// The pile-look census (VOTVCOOP_RUN_PILELOOK=1): each peer logs every chip pile it can name by
+// eid with its visible mesh rotation; the driver joins the two logs. Read-only.
+void RunPileLookScenario();
+DWORD WINAPI PileLookThread(LPVOID arg);
+
 // The trash morph gate, red and green in one run: each peer calls the guarded verb, toClump, on
 // the nearest chip pile. The host's pile morphs, proving the verb does what is being refused; the
 // client's survives with its element id. Env VOTVCOOP_RUN_TRASH_PARK=1, both peers.

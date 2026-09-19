@@ -9,6 +9,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_element_tracker.h"   // the thrown clump's eid, for the verdict
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -83,8 +84,9 @@ void RunHost() {
         const ue_wrap::FVector fwd = E::GetActorForwardVector(*player);
         const ue_wrap::FVector lin{ fwd.X * 600.f, fwd.Y * 600.f, 600.f };
         const bool vel = E::SetActorRootPhysicsVelocity(clump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
-        UE_LOGI("hostthrow: THROWN clump=%p released=%d velocitySet=%d vel=(%.0f,%.0f,%.0f)",
-                clump, rel ? 1 : 0, vel ? 1 : 0, lin.X, lin.Y, lin.Z);
+        UE_LOGI("hostthrow: THROWN clump=%p eid=%u released=%d velocitySet=%d vel=(%.0f,%.0f,%.0f)",
+                clump, static_cast<unsigned>(coop::prop_element_tracker::GetPropElementIdForActor(clump)),
+                rel ? 1 : 0, vel ? 1 : 0, lin.X, lin.Y, lin.Z);
         d.store(1);
     });
     ::Sleep(7000);   // the flight, the impact, the re-pile and its settle

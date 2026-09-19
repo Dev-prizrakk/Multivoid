@@ -64,6 +64,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // runs the grab on the puppet, broadcasts the convert and drives the held clump.
     SpawnIf("VOTVCOOP_RUN_GRAB_INTENT_TEST", "synthetic GrabIntent test", &GrabIntentTestThread, role);
     SpawnIf("VOTVCOOP_RUN_HOSTTHROW", "host-throw scenario (director walk, client watcher)", &HostThrowThread, role);
+    SpawnIf("VOTVCOOP_RUN_PILELOOK", "pile-look census (every named pile's mesh rotation, both peers)", &PileLookThread, role);
     // The host-drift scenario: the host destroys and moves some of its own piles before connect,
     // so the client's join sweep sees real orphans.
     SpawnIf("VOTVCOOP_RUN_PILE_DRIFT", "host-drift pile scenario", &PileDriftScenarioThread, role);
