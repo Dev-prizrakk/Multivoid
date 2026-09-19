@@ -442,8 +442,11 @@ void RegisterPropMirror(coop::element::ElementId eid,
                         int senderSlot,
                         bool rebindInPlace) {
     coop::element::CreateOrAdoptPropMirror(eid, actor, key, cls, senderSlot, rebindInPlace);
-    // A pile bound after its look arrived takes the look here (coop/props/pile_look.h).
-    coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
+    // A pile bound after its look arrived takes the look here (coop/props/pile_look.h) -- when the
+    // bind took: the create path can refuse one (a steal across rows, a 1:1 conflict, the host
+    // authority wall), and then `actor` is not this eid's and must not wear its look.
+    if (auto* row = coop::element::Registry::Get().Get(eid); row && row->GetActor() == actor)
+        coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
 }
 
 // The eid bound to `actor` among the Prop elements: the mirror-side fallback the chipPile grab

@@ -152,7 +152,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     if (ue_wrap::prop::IsTrashClassName(classW)) {
         // The sender's look of this pile, kept per eid: the bound actor takes it now, and an actor
         // bound later -- a pending own-save bind, a re-bind after GC churn -- takes it at the bind.
-        coop::pile_look::OnHostLook(payload.elementId, payload.look);
+        coop::pile_look::OnHostLook(payload.elementId, payload.look, senderSlot);
         // If this eid already resolves to a live bound-mirror native, that native IS the mirror:
         // nothing to spawn and nothing to register.
         if (auto* be = coop::element::Registry::Get().Get(payload.elementId)) {

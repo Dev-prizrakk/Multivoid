@@ -128,12 +128,6 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     p.chipType = chipType;
     p.kind     = kind;
     p.ctx      = ctx;
-    // A to-pile land carries the pile's pre-grab save-time position if one was recorded (the host
-    // grabbed an untracked pile in a join window, and the grab observer self-seeded the eid and
-    // stamped the pre-grab position into the blob map). An any-slot lookup, since this is a single
-    // fan-out and the eid is unique. The client's convert then arms a pending save-time twin so the
-    // quiescence sweep retires its stale native at the old position. A to-clump carries no key,
-    // since there is no native twin at that edge.
     // A land carries the look the game just drew for the new pile (coop/props/pile_look.h). E's
     // actor is that pile by now: the re-pile thunk re-pointed the element in the tick it spawned.
     if (kind == coop::net::propconvert_kind::kToPile) {
@@ -146,6 +140,12 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
             if (p.look.sclX != 0) coop::pile_look::LogLandLook("HOST", static_cast<uint32_t>(E), pile);
         }
     }
+    // A to-pile land carries the pile's pre-grab save-time position if one was recorded (the host
+    // grabbed an untracked pile in a join window, and the grab observer self-seeded the eid and
+    // stamped the pre-grab position into the blob map). An any-slot lookup, since this is a single
+    // fan-out and the eid is unique. The client's convert then arms a pending save-time twin so the
+    // quiescence sweep retires its stale native at the old position. A to-clump carries no key,
+    // since there is no native twin at that edge.
     p.hasMatchPos = 0;
     if (kind == coop::net::propconvert_kind::kToPile && static_cast<uint32_t>(E) != 0u) {
         ue_wrap::FVector sv;

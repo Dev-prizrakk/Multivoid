@@ -13,6 +13,11 @@
 // remote_prop::RegisterPropMirror, the one entry every bind goes through. Mid-join needs nothing of
 // its own: the join snapshot expresses every pile, and each expression carries the look.
 //
+// MTA keeps such state ON the element (object scale: Server/.../packets/CEntityAddPacket.cpp:267-282
+// on the add, Client/.../rpc/CObjectRPCs.cpp:88 on a change). The same two carriers here (PropSpawn,
+// PropConvert); the side map per eid is the divergence, because a look can arrive before its
+// element exists (a pending own-save bind).
+//
 // Game thread only.
 
 #pragma once
@@ -26,9 +31,11 @@ namespace coop::pile_look {
 // The look of `actor` for the wire; absent (sclX 0) when `actor` is not a pile. Any peer.
 coop::net::WirePileLook Capture(void* actor);
 
-// A host expression of `eid` arrived carrying `look`. Kept, and applied now when `eid` already has
-// a live pile bound. An absent look is ignored. Client.
-void OnHostLook(uint32_t eid, const coop::net::WirePileLook& look);
+// An expression of `eid` arrived from `senderSlot` carrying `look`. Only the host's (slot 0) is
+// taken: the host runs the same receive path for a client's PropSpawn, and a client's word must
+// not re-skin the authority's pile. Kept, and applied now when `eid` already has a live pile
+// bound. An absent look is ignored.
+void OnHostLook(uint32_t eid, const coop::net::WirePileLook& look, int senderSlot);
 
 // `actor` was just bound to `eid`. Applies the kept look, if one arrived first. A no-op for an
 // actor that is not a pile, and on the host, where nothing is ever kept.

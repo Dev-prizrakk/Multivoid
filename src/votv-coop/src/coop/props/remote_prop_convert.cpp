@@ -81,7 +81,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
         ClearAnyDriveFor(cur);
         coop::trash_mirror::RepositionBoundNative(cur, payload.chipType, loc, rot, scale);
         // After the re-skin, which re-runs init() and so draws a new look: the host's replaces it.
-        coop::pile_look::OnHostLook(E, payload.look);
+        coop::pile_look::OnHostLook(E, payload.look, senderSlot);
         coop::pile_look::LogLandLook("CLIENT", E, cur);
         const ue_wrap::FVector got = E::GetActorLocation(cur);
         const float dx = got.X - loc.X, dy = got.Y - loc.Y, dz = got.Z - loc.Z;
@@ -100,7 +100,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
     const std::wstring cls = remote_prop_spawn::ClassNameToWString(payload.pileClass);
     // Kept before the successor exists: Materialize binds E onto it, and the bind applies the look.
     // E's actor right now is the clump, which has no such mesh, so nothing is applied here.
-    coop::pile_look::OnHostLook(E, payload.look);
+    coop::pile_look::OnHostLook(E, payload.look, senderSlot);
     if (!wantClump)
         coop::trash_clump_pose_stream::ClearDriveForEid(E);  // the carry ends at the land
     void* next = coop::trash_mirror::Materialize(E, cls, payload.chipType, loc, rot, scale,

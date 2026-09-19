@@ -37,7 +37,15 @@ uint16_t PackScale(float s) {
 }
 float UnpackScale(uint16_t q) { return static_cast<float>(q) / kScaleSteps; }
 
+bool SameLook(const coop::net::WirePileLook& a, const coop::net::WirePileLook& b) {
+    return a.relPitch == b.relPitch && a.relYaw == b.relYaw && a.relRoll == b.relRoll &&
+           a.sclX == b.sclX && a.sclY == b.sclY && a.sclZ == b.sclZ;
+}
+
 void Apply(uint32_t eid, void* actor, const coop::net::WirePileLook& w) {
+    // A pile that already shows this look is left alone: a re-bracket re-expresses every pile, and a
+    // mobility flip rebuilds the component's render and physics state.
+    if (SameLook(Capture(actor), w)) return;
     CP::Look look;
     look.relRotation = ue_wrap::FRotator{UnpackAngle(w.relPitch), UnpackAngle(w.relYaw), UnpackAngle(w.relRoll)};
     look.relScale    = ue_wrap::FVector{UnpackScale(w.sclX), UnpackScale(w.sclY), UnpackScale(w.sclZ)};
@@ -67,9 +75,9 @@ coop::net::WirePileLook Capture(void* actor) {
     return w;
 }
 
-void OnHostLook(uint32_t eid, const coop::net::WirePileLook& look) {
+void OnHostLook(uint32_t eid, const coop::net::WirePileLook& look, int senderSlot) {
     UE_ASSERT_GAME_THREAD("pile_look::OnHostLook");
-    if (eid == 0 || look.sclX == 0) return;
+    if (senderSlot != 0 || eid == 0 || look.sclX == 0) return;
     g_looks[eid] = look;
     coop::element::Element* el = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
     void* actor = el ? el->GetActor() : nullptr;

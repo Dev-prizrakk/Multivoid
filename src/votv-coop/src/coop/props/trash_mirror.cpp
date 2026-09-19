@@ -44,6 +44,10 @@ void SkinTrashNative(void* native, uint8_t chipType, const ue_wrap::FRotator& ro
                     const ue_wrap::FVector& scale) {
     ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
     if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f) E::SetActorScale3D(native, scale);
+    // A pile's init() ends by making its root Static again, and a Static root ignores a rotation
+    // write while the call still reports success: a pile the host landed on a slope would lie flat
+    // here. Movable first, every time the re-init has run.
+    E::SetActorRootMovable(native);
     E::SetActorRotation(native, rot);
 }
 
@@ -58,6 +62,9 @@ struct MadeMirror {
     ue_wrap::GcPin pin;
     coop::element::ElementId eid = coop::element::kInvalidId;
     int ownerSlot = -1;
+    // The actor's object-array slot at the spawn. A pinned actor's address cannot be recycled, but
+    // an entry whose pin failed has no such guarantee, so the address alone does not name it.
+    int32_t idx = -1;
 };
 std::unordered_map<void*, MadeMirror> g_made;
 
@@ -69,8 +76,9 @@ bool DestroyIfOurs(void* actor) {
     auto it = g_made.find(actor);
     if (it == g_made.end()) return false;
     ue_wrap::GcPin pin = std::move(it->second.pin);  // out of the map, released at scope exit
+    const int32_t idx = it->second.idx;
     g_made.erase(it);
-    if (R::IsLive(actor)) E::DestroyActor(actor);
+    if (R::IsLiveByIndex(actor, idx)) E::DestroyActor(actor);
     return true;
 }
 
@@ -99,6 +107,7 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     MadeMirror& made = g_made[native];
     made.eid = eid;
     made.ownerSlot = senderSlot;
+    made.idx = R::InternalIndexOf(native);
     if (!made.pin.Pin(native)) {                    // GC-pin -- a runtime spawn has no save/world ref
         // A failed pin voids the mirror's whole rules-of-existence argument (rooted -> never
         // GC'd -> never a stale index), so it must never fail silently. The entry STAYS, with an
@@ -153,7 +162,9 @@ void Unpin(void* actor) {
 
 bool WeMade(void* actor) {
     UE_ASSERT_GAME_THREAD("trash_mirror::WeMade");
-    return actor && g_made.find(actor) != g_made.end();
+    if (!actor) return false;
+    auto it = g_made.find(actor);
+    return it != g_made.end() && R::IsLiveByIndex(actor, it->second.idx);
 }
 
 void Retire(coop::element::ElementId eid, bool authoritative) {
