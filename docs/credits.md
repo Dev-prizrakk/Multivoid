@@ -34,7 +34,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); Relay's published design note that the engine reports every object's creation and deletion to a listener, which became the object index; Relay's readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; Relay's list of cheap edge protections, of which two were missing here: a per-source limit on connections (a rate cap in MTA's shape, where Relay's is a pending cap) and a private access list on the identity key file; Relay's watch surface on a Blueprint function, a pre callback that reads the parameters and can cancel the call and a post callback that reads the result, which became the script-body gate; Relay's hooking notes, whose warning that a watch on a parent class misses a child's override sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b160 |
+| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a pre callback that reads the parameters and can cancel the call and a post callback that reads the result, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; and the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b153 · b160 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
@@ -245,7 +245,7 @@ Both were right, and the project's largest single change came out of them.
 **Channel:** Discord, VOTV community · **Reviewed:** 2026-07-26 ·
 **Landed in:** b122 (same-day documentation fixes), b143 (the substrate move)
 
-Author of the VOTV mods `Moddy-CrashContext` and `Moddy-PBMovement`. His review
+Author of the VOTV mods `Moddy-CrashContext`, `Moddy-PBMovement` and Relay. Moddy's review
 put five things to the project at once — the size of what one person plus AI was
 claiming to own, what happens when the version signatures break, whether it still
 works at month 18, whether **VoidTogether deserved credit**, and the central one:
@@ -253,7 +253,7 @@ works at month 18, whether **VoidTogether deserved credit**, and the central one
 team."*
 
 **What it produced immediately.** The VoidTogether credit was agreed and shipped
-the same day — the prior-art row in this project's credits exists because he asked
+the same day — the prior-art row in this project's credits exists because Moddy asked
 for it. Two stale documentation claims were found and fixed the same day too:
 `feasibility.md` still announced "Chosen approach: UE4SS + reflection", a decision
 reversed the day after it was written and never annotated, and the overlay was
@@ -261,58 +261,103 @@ still described as riding "UE4SS's built-in ImGui" months after the mod
 hand-rolled its own present hook. That pair became a standing project lesson: in a
 public repo, an un-annotated superseded decision is ammunition.
 
-**The listener seam (b160).** His Relay project's README states, as a design fact, that the
-engine reports every object's creation and destruction to a registered listener, so a
-networking layer need not go looking for objects. Multivoid's object index
-(`ue_wrap/core/object_index`, on `ue_wrap/core/uobject_listeners`) rides that seam, with the
-member layout from RE-UE4SS, and the shared discovery pass reads the index instead of walking
-the object array. The idea is his published design; the mechanism is this project's own.
+**Relay.** Moddy is also the author of [Relay](https://github.com/modestimpala/Relay), a Blueprint
+networking API for Voices of the Void
+([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)). Relay is closed
+source; its README, and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that
+README links, publish a good deal of its design. Everything in the seven paragraphs below was taken
+from those two public pages and is used with attribution, which is what Moddy asks for what those
+pages state. No code or asset of Relay's is in this repository, and every mechanism named below is
+this project's own.
 
-**The join reason and the codes (b160).** Relay's README publishes two rules for a networking
-layer: show the reason a world fence is closed rather than a generic "connecting", and hand a
-player stable diagnostic codes to quote. Multivoid's join screen now names the step it is
-waiting in and the seconds spent there, and every join failure or disconnect carries a code
-(`coop/net/end_reason`, listed in `docs/join.md`) the host and the joiner both log. The shape
-of the code set follows MTA's per-site literals; the rule to publish one at all is his.
+**The script-body gate (b160).** *Source: the README, "Watch and integration API".* Relay's README
+describes a Watch on a Blueprint function: a pre phase that reads the call's parameters and may
+cancel the call, a post phase that only observes, and the calling Blueprint frame handed to the
+handler. Before this, a call one Blueprint made to another was observe-only here: the seam sat at
+the call site and saw neither the arguments nor a way to refuse. Multivoid now detours the one
+engine function every Blueprint body runs through, the VM's script loop, and offers that surface
+(`ue_wrap/core/script_gate`): a watch by function or by name, a pre callback with the instance, the
+parameters and the calling frame, a verdict, a post callback. The README says Relay's cancellation
+rewrites Blueprint bytecode; this gate leaves the bytecode alone and refuses the body at the loop.
+The surface is Moddy's; the seam and its derivation are this project's own.
 
-**The edge protections (b160).** Relay's README lists the cheap things a host's listen edge
-should do before any expensive work: check a stateless source cookie, put a deadline on the
-handshake, cap what one source may have pending, and write the identity seed file under a
-restrictive Windows access list. Read against this project, two were already the transport's or
-ours (GameNetworkingSockets' connect challenge; the pending band's deadline) and two were not.
-A per-source limit on connections now runs at the accept edge, as a rate cap in MTA's
-join-flood shape rather than Relay's pending cap (`coop/net/connect_history`, `MV-H29`), and the
-identity key file beside the game now carries a private access list, with an account that
-cannot own it keeping its own under its profile (`coop/net/peer_identity`). The list is his;
-the shapes are MTA's and the project's own.
+**The join reason and the codes (b160).** *Source: the README, "Session events and state" and
+"Diagnostics".* Relay's README publishes two rules for a networking layer: show the reason a world
+fence is closed rather than a generic "connecting", and hand a player stable diagnostic codes to
+quote. Multivoid's join screen now names the step it is waiting in and the seconds spent there, and
+every join failure or disconnect carries a code (`coop/net/end_reason`, listed in `docs/join.md`)
+the host and the joiner both log. The shape of the code set follows MTA's per-site literals; the
+rule to publish one at all is Moddy's.
 
-**The script-body gate (b160).** Relay's README describes a watch on a Blueprint function
-that fires before the call with the parameters readable and rewritable, can cancel the call, can
-be scoped to one instance, and fires again after it; he offered its bytecode marker to this
-project himself, unprompted, as the part worth taking. Before this, a call one Blueprint made to
-another was observe-only here: the seam sat at the call site and saw neither the arguments nor a
-way to refuse. Multivoid now detours the one engine function every Blueprint body runs through,
-the VM's script loop, and offers that surface (`ue_wrap/core/script_gate`): a watch by function or
-by name, a pre callback with the instance, the parameters and the calling frame, a verdict, a
-post callback. Relay implements its watch by rewriting the function's bytecode and marking it
-with a no-op jump; this mod, already owning a detour on the engine, took the surface and not the
-marker. The surface is his; the seam and its derivation are this project's own.
+**The edge protections (b160).** *Source: the README, its section on how Relay protects network
+traffic.* Relay's README lists the cheap things a host's listen edge should do before any expensive
+work: check a stateless source cookie, put deadlines on the handshake, limit what one source may
+open and hold pending, and write the identity seed file under a restrictive Windows access list.
+Read against this project, two were already the transport's or ours (GameNetworkingSockets' connect
+challenge; the pending band's deadline) and two were not. A per-source limit on connections now
+runs at the accept edge, in the shape of MTA's join-flood history (`coop/net/connect_history`,
+`MV-H29`), and the identity key file beside the game now carries a private access list, with an
+account that cannot own it keeping its own under its profile (`coop/net/peer_identity`). The list is
+Moddy's; the shapes are MTA's and the project's own.
 
-**The hook audit (b161).** Relay's README also states, plainly, that a watch registered on a
-parent class does not fire for a child that overrides the function. That sentence is worth more
-here than its own mechanism: it sent us to read every hook registration this mod installs
-against the cooked Blueprint tree, and the audit found three seams that had silently never
-installed -- including a client-side cancel whose absence let a client delete props the host
-still held -- one guard registered on a route no dispatch takes, and two verbs resolved on a base
-class and called on subclasses that override them. None of those had a symptom anyone had
-reported. The warning is his; the census, the instrument and the fixes are this project's own.
+**The save record as the spawn payload (b153, b157).** *Source: the README Blueprint, the rule
+profile's `spawn_payload_capture`, `spawn_payload_apply` and `identity_ready_on` columns.* Relay's
+published rules declare, per class, that a spawned actor's payload is captured by the game's own
+`getData` and applied by its `loadData`, and that an identity may become readable only once
+`loadData` has run. That is the general form of what this project's prop save-data work was
+building case by case. A prop's save data now crosses as the game's own record
+(`coop/props/prop_save_data`, on `ue_wrap/actors/save_record`), and a grappling hook's record is the
+payload that hands the hook over between peers (`coop/items/hook_anchor`). The declaration is
+Moddy's published design; the codec, the chunking and the lanes are this project's own.
+
+**The parking rule (b160).** *Source: the README Blueprint, the `Quiesce` field of a rule
+definition.* Relay's rule definitions carry a `Quiesce` column: fields written on clients only, so
+that a client's own copy of a system never makes its roll. This project already parked receivers
+lane by lane; the column made it state the rule once -- a parking is the fix when it removes a
+second author, and a crutch when it hides a state that was never replicated
+(`docs/coop-sync-doctrine.md`, step 4) -- and read every cancel, park and neuter the mod installs
+against it. The column is Moddy's published design; the rule's wording, its test and the census are
+this project's own.
+
+**The container invariants (b160).** *Source: the README, "Built-in VotV adapters" and the
+traffic-protection section.* Relay's README gives its container handling one paragraph -- transfers
+routed through the host, the client's rows a mirror and not the canonical copy -- and says the host
+validates replicated actions, without listing the checks. There was no list to copy, so the row was
+built the other way round: this project wrote down the invariants its own container lane must hold,
+measured each, and closed the gaps the measuring found (`coop/props/container_write_policy` and its
+siblings). The prompt is Moddy's; the invariants, the measurements and the fixes are this project's
+own.
+
+**The hook audit (b161).** *Source: the README Blueprint, the note "3 // WATCH VANILLA
+BLUEPRINTS".* That note states, plainly, that a watch registered on a parent class misses a child
+that overrides the function. That sentence is worth more here than its own mechanism: it sent us to
+read every hook registration this mod installs against the cooked Blueprint tree, and the audit
+found three seams that had silently never installed -- including a client-side cancel whose absence
+let a client delete props the host still held -- one guard registered on a route no dispatch takes,
+and two verbs resolved on a base class and called on subclasses that override them. None of those
+had a symptom anyone had reported. The warning is Moddy's; the census, the instrument and the fixes
+are this project's own.
+
+**The object index, and a correction (b160).** An earlier version of this page credited Relay's
+README for the fact that the engine reports every object's creation and destruction to registered
+listeners. That credit was wrong: the mechanism is Unreal Engine's own -- `FUObjectArray` keeps a
+list of create listeners and a list of delete listeners -- and nothing Relay publishes describes it.
+This project came to it by examining Relay's closed DLL, by looking at which engine facilities it
+links against, in work since withdrawn at Moddy's request. The engine mechanism stays, with the
+pointers Moddy asked for: UE4SS, which is open source, registers on the same two lists in
+[`LiveView.cpp`](https://github.com/UE4SS-RE/RE-UE4SS/blob/7f7cc36f8cdc082566cd676acc26975a22a41aaa/UE4SS/src/GUI/LiveView.cpp#L809-L810)
+and
+[`LuaMod.cpp`](https://github.com/UE4SS-RE/RE-UE4SS/blob/7f7cc36f8cdc082566cd676acc26975a22a41aaa/UE4SS/src/Mod/LuaMod.cpp#L5728).
+Multivoid's object index (`ue_wrap/core/object_index`, on `ue_wrap/core/uobject_listeners`) appends
+to those lists directly, with the member layout from RE-UE4SS, and the shared discovery pass reads
+the index instead of walking the object array.
 
 **The honest part.** The central claim was answered with a measurement — the
 replaceable surface was 7,174 of 146,347 lines, about 5% — and **refused**, on the
 ground that the shipping mod must not require players to install a second loader.
 That refusal was published. **Four weeks later it was overturned and the mod moved
 onto UE4SS anyway**; Multivoid ships today as a UE4SS mod. The argument that
-carried the day was the one he had already made, and what changed was not a better
+carried the day was the one Moddy had already made, and what changed was not a better
 case from the other side but a re-audit that found the refusal's own premises
 unsound. The record of both, including the losing answer, is kept in
 `docs/versioning.md` rather than quietly edited away.

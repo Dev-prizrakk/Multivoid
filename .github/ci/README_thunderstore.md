@@ -59,6 +59,15 @@ There is no stable release yet — expect rough edges. Report what you hit on
 [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues); reports that change
 the mod get credited in the project's public credit ledger.
 
+## Credits
+
+Multivoid is built on other people's work. Several of its networking shapes follow design that
+**Moddy** publishes for **Relay**, a Blueprint networking API for Voices of the Void:
+[Relay on Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/) ·
+[Relay on GitHub](https://github.com/modestimpala/Relay). Everyone whose code, reports or review
+changed the mod is in the
+[credit ledger](https://github.com/VOTV-MP/Multivoid/blob/main/docs/credits.md).
+
 ## Legal
 
 Hook-only mod: it contains **no VOTV code or assets** and never modifies the game's

@@ -104,6 +104,10 @@ it. It is a crutch when the parked side goes quiet because it is **blind**: the 
 replicated, and the parking hides the gap rather than the divergence. What decides it is the count
 of authors before and after, never how small the parking is.
 
+Relay, Moddy's Blueprint networking API for VOTV, publishes the same idea as a rule column,
+`Quiesce`: fields written on clients only, so the client's own copy never makes its roll. The test
+above is this project's wording of when such a parking is right ([credits](credits.md)).
+
 Two things follow. The order is forced: while a state is unreplicated, parking its producer is a
 blindfold, so the state crosses first and the parking follows it. And when the parked body carries
 side effects the receiver still needs, park the one authored **output** instead of the body: the

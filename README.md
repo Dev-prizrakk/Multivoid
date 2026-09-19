@@ -141,7 +141,7 @@ a row; the full ledger is [docs/credits.md](docs/credits.md).
 | [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
 | [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** (Discord) | review | The architecture and documentation reviews that became the UE4SS move and the repository cleanup | b122 · b143 |
+| **Moddy** (Discord) | review · design | The architecture and documentation reviews that became the UE4SS move and the repository cleanup; design published for [Relay](https://github.com/modestimpala/Relay) ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), Moddy's Blueprint networking API for VOTV: the watch surface, readable join reasons and stable codes, host-edge protections, save records as spawn payloads, the hook-override note | b122 · b143 · b160 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** (Discord) | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** ([#5](https://github.com/VOTV-MP/Multivoid/issues/5)) | report | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
