@@ -333,6 +333,20 @@ bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component)
     return true;
 }
 
+bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& rotation) {
+    if (!phc || !R::IsLive(phc)) return false;
+    static void* fn = nullptr;
+    if (!fn) {
+        if (void* cls = R::FindClass(P::name::PhysicsHandleComponentClass))
+            fn = R::FindFunction(cls, P::name::SetTargetLocationAndRotationFn);
+    }
+    if (!fn) return false;
+    ParamFrame f(fn);
+    f.SetRaw(L"NewLocation", &location, sizeof(location));
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    return Call(phc, f);
+}
+
 void* ReadMainPlayerGrabHandle(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
     const int32_t off = ue_wrap::reflected_offset::MainPlayer_grabHandle();

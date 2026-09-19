@@ -191,7 +191,7 @@ void RunGrabIntentTest() {
     }
     // 4b. Carry about 3 s still, so the drift metric shows the clump holding its commanded pose and
     // the host's hand-velocity average decays, making the next press a soft release.
-    UE_LOGI("grab_intent_test: >>> STILL-CARRY 3s (L3: maxDriftCm should stay ~0; L4: handVel decays for a soft release) <<<");
+    UE_LOGI("grab_intent_test: >>> STILL-CARRY 3s (L3: maxLagCm stays a few cm on a free carry; L4: a still body is released with ~0 velocity, a soft release) <<<");
     ::Sleep(3000);
 
     // 5. The soft release through the real toggle: InpActEvt_use again while still, so the observer

@@ -34,16 +34,9 @@ void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump);
 // client renders the throw arc, until the clump re-piles (the latch closes / a settle commits). Game thread.
 void NoteThrown(coop::element::ElementId eid);
 
-// HOST: the current SMOOTHED hand velocity (cm/s) of the puppet-held clump for `eid`, derived from the
-// per-tick motion of the hold point (head + aim*grabLen). trash_channel::OnThrowIntent releases the clump
-// with THIS velocity so the throw inherits the player's actual hand/camera motion (native PHC semantics:
-// still -> ~0 -> a soft drop; a flick -> a real throw) instead of a fixed impulse. Zero if `eid` is not
-// held, is in flight, or has no sample yet. Caller clamps to a sane max. Game thread.
-ue_wrap::FVector HandVelocityForEid(coop::element::ElementId eid);
-
 // HOST: per-gameplay-tick pump (called from subsystems::TickGameplay AFTER trash_channel::TickCarry, so
 // the carry latch is current before the drive guards on IsCarrying). For each registered held clump:
-// guard (latch open, clump live, puppet live); if NOT flying, SetActorLocation(clump, head + aim*grabLen);
+// guard (latch open, clump live, puppet live); if NOT flying, the puppet's physics handle is given its target (head + aim*grabLen);
 // then PUBLISH its pose on `s`'s host-originated TrashCarryPose queue (carry + flight). Drops the
 // entry when the clump dies, the puppet leaves, or the carry latch closes (the re-pile land). Game thread.
 void Tick(coop::net::Session& s);

@@ -2,13 +2,14 @@
 
 #include "coop/player/puppet_carry_drive.h"
 
-#include "coop/props/active_drive.h"       // NowMs -- timestamp the hand-velocity samples
 #include "coop/net/protocol.h"       // TrashClumpPoseSnapshot (the carry pose batch entry)
 #include "coop/net/session.h"        // PublishTrashCarryPose (host publish)
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/trash_channel.h"     // IsCarrying / HasPendingSettle / CtxForEid (carry latch + stamp)
-#include "ue_wrap/engine/engine.h"          // SetActorLocation / GetActorLocation / GetActorRotation
+#include "ue_wrap/engine/engine.h"          // GetActorLocation / GetActorRotation
+#include "ue_wrap/engine/engine_component.h"   // SetComponentTickEnabled (the handle's own tick)
+#include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerGrabHandle / SetPhysicsHandleTarget
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"      // IsLiveByIndex / InternalIndexOf
 #include "ue_wrap/core/types.h"           // FVector / FRotator / NormalizeAxis
@@ -37,18 +38,10 @@ struct PuppetHeld {
     // (physics) pose each tick so every client renders the throw ARC, until the clump re-piles (the latch
     // closes / a settle commits) -> the entry is dropped + the ToPile convert lands the pile.
     bool     flying = false;
-    // Inherit-hand-velocity throw: the hold point last drive tick + its timestamp, and an EMA of the
-    // per-tick hand velocity (cm/s). At a ThrowIntent the host releases with THIS velocity (the kinematic
-    // analog of the native PHC's inherited tracked velocity) instead of a fixed impulse -- a still player ->
-    // ~0 -> a soft drop; a flick -> a real throw. EMA-smoothed here + clamped at release (a raw teleport
-    // delta on a fast flick spikes far past any human throw; the native PHC spring is damped).
-    ue_wrap::FVector lastHold{0.f, 0.f, 0.f};
-    uint64_t         lastHoldMs  = 0;
-    bool             hasLastHold = false;
-    ue_wrap::FVector handVel{0.f, 0.f, 0.f};   // EMA of the hand velocity, cm/s
-    float            maxDriftCm  = 0.f;        // harness metric: worst inter-tick drift of the clump from
-                                               // its commanded hold (kinematic -> ~0; a physics-fought body
-                                               // drifts = the carry-shake signature the host would publish)
+    // How far the clump trails the hold point, worst case this carry (cm). The hold is the game's own
+    // physics handle, a force-limited spring: a free carry trails by a few centimetres, and a clump
+    // pressed against something heavy trails by as much as the player pushes -- which is the point.
+    float    maxLagCm = 0.f;
 };
 
 std::vector<PuppetHeld> g_held;  // GT-only; at most one per peer (carry AND flight, distinguished by `flying`)
@@ -66,8 +59,14 @@ void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump) {
         }
     }
     g_held.push_back(PuppetHeld{e, slot, clump, R::InternalIndexOf(clump), false});
-    UE_LOGI("[PUPPET-DRIVE] NOTE eid=%u slot=%u clump=%p -- per-tick hand-follow ON "
-            "(the puppet tick does not drive the PHC; the host drives the hold pose)", e, slot, clump);
+    // The handle moves its hold toward the target in its own component tick; a puppet's actor tick
+    // is off, and nothing says its components' are on.
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    void* phc = (rp && rp->valid()) ? E::ReadMainPlayerGrabHandle(rp->GetActor()) : nullptr;
+    const bool ticking = phc && E::SetComponentTickEnabled(phc, true);
+    UE_LOGI("[PUPPET-DRIVE] NOTE eid=%u slot=%u clump=%p handle=%p ticking=%d -- the host advances the "
+            "puppet's handle target each tick (the puppet's own tick, which does it natively, is off)",
+            e, slot, clump, phc, ticking ? 1 : 0);
 }
 
 void NoteThrown(coop::element::ElementId eid) {
@@ -80,13 +79,6 @@ void NoteThrown(coop::element::ElementId eid) {
             return;
         }
     }
-}
-
-ue_wrap::FVector HandVelocityForEid(coop::element::ElementId eid) {
-    const uint32_t e = static_cast<uint32_t>(eid);
-    for (const auto& h : g_held)
-        if (h.eid == e && !h.flying) return h.handVel;   // flight reads physics, not the (stale) hand EMA
-    return ue_wrap::FVector{0.f, 0.f, 0.f};
 }
 
 void Tick(coop::net::Session& s) {
@@ -127,42 +119,25 @@ void Tick(coop::net::Session& s) {
                 it = g_held.erase(it);
                 continue;
             }
-            // Jitter metric (harness): how far did the clump DRIFT from last tick's commanded hold,
-            // measured BEFORE we re-command it? A kinematic body stays exactly where we put it -> ~0; a
-            // simulating body fought by the PHC spring + gravity drifts between ticks = the carry-shake the
-            // host would otherwise publish. The autonomous harness asserts maxDriftCm < a small threshold.
-            if (it->hasLastHold) {
-                const ue_wrap::FVector cur = E::GetActorLocation(it->clump);
-                const float ddx = cur.X - it->lastHold.X, ddy = cur.Y - it->lastHold.Y, ddz = cur.Z - it->lastHold.Z;
-                const float drift = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-                if (drift > it->maxDriftCm) it->maxDriftCm = drift;
-            }
-            // Drive: position the held clump at the puppet's hand = head + syncedAim * grabLen. The puppet's
-            // synced aim is already streamed (curYaw_/curPitch_), so the clump tracks where the remote player
-            // looks. SetActorLocation is a teleport that wins over the (un-driven, frozen) PHC target.
+            // The hold point: head + synced aim * grabLen, where the remote player looks. It goes to the
+            // puppet's OWN physics handle as its target, the call the player's tick makes natively
+            // (mainPlayer: grabHandle->SetTargetLocationAndRotation(camera + forward * grabLen)). The
+            // clump stays in the solver, held by the handle's force-limited spring, so what it pushes
+            // against pushes back: a light clump is stopped by a heavy box. Writing the clump's location
+            // instead made it a kinematic collider, which shoves any dynamic body with no force limit.
             const ue_wrap::FVector head = rp->GetHeadPosition();
             const ue_wrap::FVector fwd  = rp->GetSyncedAimDirection();
             const ue_wrap::FVector hold{ head.X + fwd.X * kGrabLenCm,
                                          head.Y + fwd.Y * kGrabLenCm,
                                          head.Z + fwd.Z * kGrabLenCm };
-            E::SetActorLocation(it->clump, hold);
-            // Track the hold point's SMOOTHED velocity (cm/s) so a ThrowIntent can release with the
-            // inherited hand motion. EMA damps the single-frame teleport-delta spikes (emulates the native
-            // PHC spring's damped response); direction is the real hand motion, not the aim.
-            const uint64_t nowMs = coop::active_drive::NowMs();
-            if (it->hasLastHold && nowMs > it->lastHoldMs) {
-                const float dt = static_cast<float>(nowMs - it->lastHoldMs) * 0.001f;
-                if (dt > 1e-4f) {
-                    const ue_wrap::FVector inst{ (hold.X - it->lastHold.X) / dt,
-                                                 (hold.Y - it->lastHold.Y) / dt,
-                                                 (hold.Z - it->lastHold.Z) / dt };
-                    constexpr float kEma = 0.35f;
-                    it->handVel.X += kEma * (inst.X - it->handVel.X);
-                    it->handVel.Y += kEma * (inst.Y - it->handVel.Y);
-                    it->handVel.Z += kEma * (inst.Z - it->handVel.Z);
-                }
-            }
-            it->lastHold = hold; it->lastHoldMs = nowMs; it->hasLastHold = true;
+            const float yaw   = std::atan2(fwd.Y, fwd.X) * 57.29578f;
+            const float pitch = std::atan2(fwd.Z, std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y)) * 57.29578f;
+            E::SetPhysicsHandleTarget(E::ReadMainPlayerGrabHandle(rp->GetActor()), hold,
+                                      ue_wrap::FRotator{pitch, yaw, 0.f});
+            const ue_wrap::FVector cur = E::GetActorLocation(it->clump);
+            const float lx = cur.X - hold.X, ly = cur.Y - hold.Y, lz = cur.Z - hold.Z;
+            const float lag = std::sqrt(lx * lx + ly * ly + lz * lz);
+            if (lag > it->maxLagCm) it->maxLagCm = lag;
         }
         // STREAM the clump's CURRENT pose (hand pos when carrying, physics pos when flying) to ALL peers so
         // every client renders the carry + the throw arc. Host-authoritative + host-originated (the relay
@@ -181,9 +156,9 @@ void Tick(coop::net::Session& s) {
             snap.ctx   = coop::trash_channel::CtxForEid(E);
             s.PublishTrashCarryPose(snap, /*ahead=*/true);
             if ((sTick % 60) == 0)
-                UE_LOGI("[TRASH-CARRY] HOST PUBLISH eid=%u slot=%u %s -> (%.1f,%.1f,%.1f) ctx=%u maxDriftCm=%.2f",
+                UE_LOGI("[TRASH-CARRY] HOST PUBLISH eid=%u slot=%u %s -> (%.1f,%.1f,%.1f) ctx=%u maxLagCm=%.1f",
                         it->eid, it->slot, it->flying ? "FLIGHT" : "carry", loc.X, loc.Y, loc.Z,
-                        static_cast<unsigned>(snap.ctx), it->maxDriftCm);
+                        static_cast<unsigned>(snap.ctx), it->maxLagCm);
         }
         ++it;
     }

@@ -317,14 +317,11 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
         TakeClumpBorn(clump, &bornE, &bornChip);
     }
 
-    // Take the clump out of the physics solver for the duration of the carry. playerGrabbed
-    // engaged the puppet's physics handle on a still-simulating body, but the puppet tick never
-    // advances the handle target, so the handle's spring (frozen at the grab spot) and gravity
-    // fight the per-tick location teleport of the carry drive; the body oscillates, and the host
-    // reads that jittered pose back into the carry stream so every peer shakes. A kinematic body
-    // honours the location write exactly, so the drive is the sole authority and the published
-    // pose is clean. Re-enabled at the throw for the arc.
-    ue_wrap::engine::SetActorSimulatePhysics(clump, false);
+    // The clump STAYS in the physics solver, on the puppet's own physics handle, which playerGrabbed
+    // just engaged. The puppet's tick never advances the handle's target, so the carry drive does
+    // (coop/player/puppet_carry_drive): that is the whole of what a puppet's hold lacks. A kinematic
+    // clump moved by location writes looked clean and shoved every box it touched with no force
+    // limit, where the game's hold is a spring that a heavy box stops.
 
     // Record the holder before the convert (OnHostConvert opens the carry latch). Then convert E
     // onto the clump (the context bump and the to-clump broadcast to all, the requester included)
@@ -364,24 +361,15 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
     }
 
     // The throw must release the puppet's grab, so the clump's re-pile gate (the holder's
-    // grabbing_actor being valid) reads not held, or it aborts the re-pile; the native release
-    // applies no impulse (the launch is inherited kinematic velocity), but a host-driven clump has
-    // none, so the host applies the throw velocity itself; and hit notification and physics go
-    // on, so the flying clump generates the ground contact that fires its own re-pile graph, and
-    // the existing spawn thunk converts to-pile.
+    // grabbing_actor being valid) reads not held, or it aborts the re-pile. The native release
+    // applies no impulse: the body leaves the handle with the velocity the hold gave it, and the
+    // carried clump is a simulating body on that handle, so a release writes no velocity at all.
+    // Hit notification goes on, so the flying clump generates the ground contact that fires its
+    // own re-pile graph, and the existing spawn thunk converts to-pile.
     ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);   // clear grabbing_actor and release the physics handle
     ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(clump, true);  // re-pile depends on the contact stream
-    ue_wrap::engine::SetActorSimulatePhysics(clump, true);
     ue_wrap::engine::SetActorRootCollisionEnabled(clump, /*QueryAndPhysics=*/3);  // collide + land (don't sink)
-    // The native release key is the only release input, and the launch is the body's inherited
-    // hand or camera motion at release (a still player drops softly, a flick throws), not a fixed
-    // impulse: a constant impulse fired a hard throw on every release and never a drop. The carry
-    // drive tracks the hold point's smoothed per-tick velocity (the kinematic analog of the native
-    // handle's inherited velocity); that is used, clamped to a brisk human maximum, since a raw
-    // teleport delta on a fast flick can spike far past any real throw. The direction comes from
-    // the hand motion, not the aim, so a soft drop falls straight down and a forward flick flies
-    // forward, the native feel.
-    ue_wrap::FVector lin;
+    ue_wrap::FVector lin = ue_wrap::engine::GetActorVelocity(clump);   // what the hold gave it: the release keeps it
     if (mode == coop::net::throw_mode::kHardThrow) {
         // The native hard throw: the launch is the engine's projectile-toss suggestion, which
         // reduces to camera-forward times 15000 over the clump's mass floored at 10, plus the
@@ -393,19 +381,8 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
         const float speed = 15000.f / denom;
         const ue_wrap::FVector pv = ue_wrap::engine::GetActorVelocity(puppet);
         lin = ue_wrap::FVector{ camFwd.X * speed + pv.X, camFwd.Y * speed + pv.Y, camFwd.Z * speed + pv.Z };
-    } else {
-        // The release: the launch is the puppet's smoothed hand motion (a still hold drops softly,
-        // a flick flies), capped to a brisk human maximum so a teleport-delta spike is not a wild
-        // throw.
-        lin = coop::puppet_carry_drive::HandVelocityForEid(static_cast<coop::element::ElementId>(eid));
-        constexpr float kMaxThrowCmS = 650.f;   // ~6.5 m/s -- above this is a teleport-delta artifact, not a human throw
-        const float sp2 = lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z;
-        if (sp2 > kMaxThrowCmS * kMaxThrowCmS) {
-            const float sc = kMaxThrowCmS / std::sqrt(sp2);
-            lin.X *= sc; lin.Y *= sc; lin.Z *= sc;
-        }
+        ue_wrap::engine::SetActorRootPhysicsVelocity(clump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
     }
-    ue_wrap::engine::SetActorRootPhysicsVelocity(clump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});  // apply AFTER SimulatePhysics(true)
     coop::puppet_carry_drive::NoteThrown(static_cast<coop::element::ElementId>(eid));  // stop hand-drive; stream the flight
     UE_LOGI("[THROW-INTENT] SUCCESS eid=%u slot=%u mode=%s clump=%p -- puppet released + physics thrown vel=(%.0f,%.0f,%.0f); "
             "clump flies + self-re-piles (thunk -> ToPile)", eid, senderSlot,

@@ -28,6 +28,12 @@ bool WarmupPhcReleaseCache();
 // `phc` is null or dead or the slot is empty. Game thread.
 void* ReadPhysicsHandleGrabbedComponent(void* phc);
 
+// UPhysicsHandleComponent::SetTargetLocationAndRotation: where the handle pulls what it holds. The
+// player's own tick calls it every frame; a puppet's tick is off, so its carry drive calls it. The
+// handle's own component tick is what moves the hold toward the target: the caller makes sure
+// it runs. False when `phc` is not live or the verb did not resolve. Game thread.
+bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& rotation);
+
 // The AmainPlayer_C grab-state properties, read in one dispatch: grabbingActor and holdingActor
 // cover the two carry paths (the physics handle vs the chipPile/clump carry). False on a null or
 // dead pawn; `holdingActor` stays null when MainPlayer_holding_actor() is unresolved (a later
