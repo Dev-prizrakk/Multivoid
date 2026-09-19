@@ -3,17 +3,15 @@
 #include "coop/items/player_inventory_sync.h"
 
 #include "coop/net/blob_chunks.h"
-#include "ue_wrap/core/paths.h"
 #include "coop/config/config.h"
 #include "coop/items/inventory_wire.h"
 #include "coop/items/player_profile.h"
+#include "coop/player/player_profile_store.h"
 #include "coop/player/players_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_synth_key.h"  // RandomKeyString, the fresh key of a copied record
 #include "coop/session/player_handshake.h"
-#include "coop/text/utf8_codec.h"
-#include "coop/save/save_transfer.h"
 #include "ue_wrap/actors/begin_equipment.h"  // GiveFromClass, the starter-kit probe
 #include "ue_wrap/engine/engine.h"      // SetSaveObjectReadyHook, the pre-materialise apply point
 #include "ue_wrap/actors/inventory.h"
@@ -21,40 +19,28 @@
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile_names.h"  // the start point
+#include "ue_wrap/engine/save_capture.h"  // the moment the world is gathered into the save object
+#include "ue_wrap/engine/save_to_slot_hook.h"  // the moment the host's world is saved
 
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
+#include <cwchar>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace coop::player_inventory_sync {
 namespace {
 
-namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Host: the per-slot received-blob state and the reassembler.
+// Host: the reassembler of the clients' streams. What it completes goes to
+// coop/player/player_profile_store, which holds it by GUID.
 coop::blob_chunks::Assembler g_assembler;
-struct HostEntry {
-    std::string          guid;
-    std::string          nick;                // a snapshot at receive (game thread): the shutdown flush runs off the game thread
-    std::vector<uint8_t> blob;
-    uint64_t             hash = 0;
-    bool                 dirty = false;       // received, not yet flushed to disk
-    Clock::time_point    lastWrite{};         // 15 s rate-limit
-};
-std::array<HostEntry, coop::net::kMaxPeers> g_hostBySlot;
 
 // Client: the send-dedup state.
 uint64_t          g_lastItemsHash = 0;  // the items half of the last profile sent
@@ -69,11 +55,10 @@ constexpr auto kClientPoll  = std::chrono::seconds(1);
 // at the poll rate. They ride a change of the items at once, and on their own at this cadence,
 // which is the most a crash or a kill of the client can cost them.
 constexpr auto kVitalsCadence = std::chrono::seconds(30);
-constexpr auto kWriteRate   = std::chrono::seconds(15);
 constexpr auto kAsmTtl      = std::chrono::seconds(30);
 
-// The live per-player apply on join. The host pushes each joiner its persisted inventory
-// (coop_players/<slot>/<guid>.json); the client buffers it and the pre-materialise save-object
+// The live per-player apply on join. The host pushes each joiner its profile (the one the store
+// holds, else coop_players/<slot>/<guid>.json); the client buffers it and the pre-materialise save-object
 // hook substitutes it into the freshly loaded save object before the native load builds the
 // live world from it, so the joiner gets their own items, not the host's. The loaded save object
 // is a capture of the HOST's, so what it carries is never this player's: with no blob the hook
@@ -105,186 +90,6 @@ std::array<uint32_t, coop::net::kMaxPeers> g_hostSendSeq{};
 // from the host tick the instant the slot is connected and its join GUID has arrived, well
 // before the client finishes its save transfer and load. Reset on disconnect.
 std::array<bool, coop::net::kMaxPeers> g_applySentToSlot{};
-
-// Build <gameDir>/coop_players/<hostSlot>/<guid>.json, empty if any piece is missing. Stored
-// in the game folder beside the ini and the log rather than in AppData, so the per-player
-// files are easy to find and hand-edit; keyed per host save slot, so different worlds keep
-// separate inventories.
-fs::path PlayerFilePath(const std::string& guid) {
-    // Defence in depth (the wire boundary already validates): a GUID that is not exactly 32 hex
-    // characters never becomes a path component; an empty path makes every write no-op, so a
-    // non-hex GUID cannot traverse.
-    if (!coop::player_handshake::IsValidGuid(guid)) return {};
-    const std::wstring base = ue_wrap::paths::ExeDir();
-    if (base.empty()) return {};
-    const std::wstring slot = coop::save_transfer::HostSlot();
-    if (slot.empty()) return {};
-    return fs::path(base) / L"coop_players" / slot / (std::wstring(guid.begin(), guid.end()) + L".json");
-}
-
-std::string Hex(const std::vector<uint8_t>& b) {
-    static const char k[] = "0123456789abcdef";
-    std::string s;
-    s.reserve(b.size() * 2);
-    for (uint8_t c : b) { s.push_back(k[c >> 4]); s.push_back(k[c & 0xF]); }
-    return s;
-}
-
-// The nick goes into a JSON string field below. Encoding is the codec's job; escaping is this
-// site's, because the container is JSON. Raw UTF-8 is valid inside a JSON string, only the
-// two structural metacharacters have to go, and they cannot appear inside a multi-byte
-// sequence (continuation bytes are all above 0x7F), so dropping them cannot corrupt one.
-std::string NickForJson(const std::wstring& w) {
-    std::string s = coop::text::CapUtf8Bytes(coop::text::ToUtf8(w), coop::text::kNickMaxBytes);
-    s.erase(std::remove_if(s.begin(), s.end(),
-                           [](char c) { return c == '"' || c == '\\'; }),
-            s.end());
-    return s;
-}
-
-// Persist `blob` to `file`: a magic, an FNV integrity hash and a readable nick and last-seen,
-// written atomically (a temp file and a rename) and keeping a .bak of the last good file so a
-// corrupt hand edit can be recovered. False on I/O failure, logged.
-bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const std::string& nick) {
-    if (file.empty()) return false;
-    std::error_code ec;
-    fs::create_directories(file.parent_path(), ec);
-    if (ec) {
-        UE_LOGW("player_inventory: create_directories('%ls') failed: %s",
-                file.parent_path().c_str(), ec.message().c_str());
-        return false;
-    }
-    // Keep the last good file as .bak before overwriting.
-    if (fs::exists(file, ec))
-        fs::copy_file(file, fs::path(file).concat(L".bak"), fs::copy_options::overwrite_existing, ec);
-    const uint64_t fnv = coop::blob_chunks::Fnv64(blob);
-    const long long epoch = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    char fnvhex[17] = {};
-    std::snprintf(fnvhex, sizeof(fnvhex), "%016llx", static_cast<unsigned long long>(fnv));
-    std::string json = "{\"magic\":\"VCPI\",\"ver\":1,\"fnv\":\"";
-    json += fnvhex;
-    json += "\",\"nick\":\"";
-    json += nick;
-    json += "\",\"lastSeen\":";
-    json += std::to_string(epoch);
-    json += ",\"blob\":\"";
-    json += Hex(blob);
-    json += "\"}\n";
-    const fs::path tmp = fs::path(file).concat(L".part");
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f || !(f << json)) {
-            UE_LOGE("player_inventory: write failed ('%ls')", tmp.c_str());
-            return false;
-        }
-    }
-    fs::rename(tmp, file, ec);
-    if (ec) {
-        UE_LOGE("player_inventory: rename('%ls') failed: %s", file.c_str(), ec.message().c_str());
-        return false;
-    }
-    return true;
-}
-
-// Decode a hex string of either case to bytes. False on an odd length or a non-hex digit.
-bool UnHex(const std::string& s, std::vector<uint8_t>& out) {
-    if (s.size() & 1) return false;
-    auto nib = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    out.clear();
-    out.reserve(s.size() / 2);
-    for (size_t i = 0; i < s.size(); i += 2) {
-        const int hi = nib(s[i]), lo = nib(s[i + 1]);
-        if (hi < 0 || lo < 0) return false;
-        out.push_back(static_cast<uint8_t>((hi << 4) | lo));
-    }
-    return true;
-}
-
-// Extract the value of a string field from our flat JSON (no nesting or escapes are used).
-bool JsonStr(const std::string& doc, const char* key, std::string& out) {
-    std::string needle = std::string("\"") + key + "\":\"";
-    const size_t k = doc.find(needle);
-    if (k == std::string::npos) return false;
-    const size_t v = k + needle.size();
-    const size_t e = doc.find('"', v);
-    if (e == std::string::npos) return false;
-    out = doc.substr(v, e - v);
-    return true;
-}
-
-// Parse one persisted inventory file into `outBlob`. Defensive against a hand edit: requires
-// the magic, a parseable hex blob and a matching FNV. False on any failure (the caller tries
-// the .bak, then empty); never throws, never returns unverified bytes.
-bool ParseBlobFile(const fs::path& file, std::vector<uint8_t>& outBlob) {
-    std::error_code ec;
-    if (file.empty() || !fs::exists(file, ec)) return false;
-    std::ifstream f(file, std::ios::binary);
-    if (!f) return false;
-    std::string doc((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    std::string magic;
-    if (!JsonStr(doc, "magic", magic) || magic != "VCPI") {
-        UE_LOGW("player_inventory: '%ls' missing/bad magic -- treating as corrupt", file.c_str());
-        return false;
-    }
-    std::string blobHex, fnvHex;
-    if (!JsonStr(doc, "blob", blobHex) || !JsonStr(doc, "fnv", fnvHex)) return false;
-    std::vector<uint8_t> blob;
-    if (!UnHex(blobHex, blob)) {
-        UE_LOGW("player_inventory: '%ls' blob hex unparseable -- corrupt", file.c_str());
-        return false;
-    }
-    char want[17] = {};
-    std::snprintf(want, sizeof(want), "%016llx",
-                  static_cast<unsigned long long>(coop::blob_chunks::Fnv64(blob)));
-    if (fnvHex != want) {
-        UE_LOGW("player_inventory: '%ls' FNV mismatch (have %s, stored %s) -- corrupt/tampered",
-                file.c_str(), want, fnvHex.c_str());
-        return false;
-    }
-    outBlob = std::move(blob);
-    return true;
-}
-
-// Read a peer GUID's persisted inventory blob, FNV-verified, with the .bak fallback. False
-// when neither file is valid, and the caller uses an empty inventory: a corrupt or missing
-// file can never leak another player's inventory or crash; the player starts empty.
-bool ReadBlobFile(const std::string& guid, std::vector<uint8_t>& outBlob) {
-    const fs::path file = PlayerFilePath(guid);
-    if (file.empty()) return false;
-    if (ParseBlobFile(file, outBlob)) return true;
-    const fs::path bak = fs::path(file).concat(L".bak");
-    if (ParseBlobFile(bak, outBlob)) {
-        UE_LOGW("player_inventory: recovered guid=%s inventory from .bak (primary corrupt)",
-                guid.c_str());
-        return true;
-    }
-    return false;
-}
-
-// Flush one host slot's pending blob to its file, ignoring the rate limit (disconnect and
-// shutdown). Clears dirty.
-void FlushSlot(int slot) {
-    if (slot < 0 || slot >= coop::net::kMaxPeers) return;
-    HostEntry& e = g_hostBySlot[slot];
-    if (!e.dirty || e.guid.empty()) return;
-    // The nick snapshot captured at receive, on the game thread: this is reachable from the
-    // shutdown flush off the game thread, so it must touch no game-thread-only state (the
-    // nickname table is one).
-    const Clock::time_point t0 = Clock::now();
-    if (WriteBlobFile(PlayerFilePath(e.guid), e.blob, e.nick)) {
-        e.dirty = false;
-        e.lastWrite = Clock::now();
-        UE_LOGI("player_inventory: flushed slot %d guid=%s (%zu-byte blob) to disk in %lld us",
-                slot, e.guid.c_str(), e.blob.size(), static_cast<long long>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(e.lastWrite - t0).count()));
-    }
-}
 
 // Client: the last place the local player was standing (see player_profile::Pose). Sampled at
 // the poll, kept while the player drives, falls or lies ragdolled.
@@ -352,16 +157,15 @@ void ClientStreamTick(coop::net::Session* s) {
     }  // else: refused -> retry next poll under a fresh seq
 }
 
-// Host: sweep stale half-assemblies, flush the rate-limited dirty blobs, and push each newly
-// connected joiner its per-player apply blob once (the pre-world connect edge).
+// Host: sweep stale half-assemblies and push each newly connected joiner its per-player apply
+// blob once (the pre-world connect edge). Nothing is written to disk from here: the store is cut
+// when the host's world is saved, and only then.
 void HostPersistTick(coop::net::Session* s) {
     const Clock::time_point now = Clock::now();
     if (now - g_lastSweep < std::chrono::seconds(1)) return;
     g_lastSweep = now;
     g_assembler.Sweep(now, kAsmTtl);
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        HostEntry& e = g_hostBySlot[slot];
-        if (e.dirty && now - e.lastWrite >= kWriteRate) FlushSlot(slot);
         // The connect-edge push: once a slot is connected and its GUID has arrived (carried in the
         // join), send it its persisted inventory once, latching on a successful enqueue only, so a
         // channel-busy refusal or a not-yet-arrived GUID retries on the next 1 Hz tick. Reliable
@@ -444,10 +248,57 @@ void OnSaveObjectReady(void* saveSlotObject) {
             placed ? "" : ", playerTransform NOT written");
 }
 
+// Host: the game is gathering the world into its save object (ue_wrap/engine/save_capture: its own
+// save, or a join capture). The profiles as they stand now are the ones consistent with that
+// world.
+bool g_gatherSeen = false;  // since the last world save
+void OnWorldGather() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Host) return;
+    g_gatherSeen = true;
+    coop::player_profile_store::MarkWorldGathered();
+}
+
+// Host: the engine reported a world save written (ue_wrap/engine/save_to_slot_hook; the thread
+// that saved, which is the game thread). Only THE world counts: the live save object, under a slot
+// name of the game's own. The save-slot menu writes regenerated and copied save objects, and the
+// join capture writes the live one to a zcoop_ scratch slot; neither is a moment the host's world
+// on disk changed.
+void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Host) return;
+    if (std::wcsncmp(slotName, L"zcoop_", 6) == 0) return;
+    if (void* live = ue_wrap::inventory::ResolveSaveSlot(); saveObject != live) {
+        // The save-slot menu writes save objects of its own; a mismatch that is NOT that would be a
+        // stale gamemode behind the resolver, and a cut skipped for it must be visible.
+        UE_LOGI("player_inventory: a world save of %p to '%ls' is not the hosted world's save object "
+                "(%p) -- no profiles cut", saveObject, slotName, live);
+        return;
+    }
+    // No gather seen since the last save: either the game's event gate skipped it, and then the
+    // file holds the last gather's world and what was set aside THEN is what belongs beside it --
+    // or the gather watch is not standing, and then a save with no event on did gather. Only a
+    // positive "no event" is that second case; "cannot ask" writes nothing newer.
+    if (!g_gatherSeen && coop::player_profile_store::AnythingPending() &&
+        ue_wrap::save_capture::GameEventState() == ue_wrap::save_capture::EventState::Off) {
+        UE_LOGW("player_inventory: the host's world was saved with no gather seen and no event on "
+                "-- the gather watch is not standing; taking the profiles as of now");
+        coop::player_profile_store::MarkWorldGathered();
+    }
+    g_gatherSeen = false;
+    const Clock::time_point t0 = Clock::now();
+    const size_t n = coop::player_profile_store::CutToDisk();
+    UE_LOGI("player_inventory: the host's world was saved to '%ls' -- %zu changed profile(s) cut to "
+            "disk with it in %lld us", slotName, n, static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count()));
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    ue_wrap::save_to_slot_hook::SetWritten(&OnWorldSaveWritten);
+    ue_wrap::save_capture::SetWorldGatherHook(&OnWorldGather);
     // Arm the engine's pre-materialise apply point (a no-op until a client join has a pending
     // blob). Re-arming across stop and start is harmless.
     ue_wrap::engine::SetSaveObjectReadyHook(&OnSaveObjectReady);
@@ -455,6 +306,20 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
+    // Host: the game's own saves have to be seen from the first one, with or without a client
+    // connected. 1 Hz until it stands; the classes it stands on load with the world, and the
+    // wrapper makes a failure that cannot heal final.
+    if (s && s->running() && s->role() == coop::net::Role::Host) {
+        static bool s_gatherWatch = false;
+        static Clock::time_point s_nextTry{};
+        if (!s_gatherWatch) {
+            const Clock::time_point now = Clock::now();
+            if (now >= s_nextTry) {
+                s_nextTry = now + std::chrono::seconds(1);
+                s_gatherWatch = ue_wrap::save_capture::InstallGatherWatch();
+            }
+        }
+    }
     if (s && s->connected()) {
         if (s->role() == coop::net::Role::Client) ClientStreamTick(s);
         else                                      HostPersistTick(s);
@@ -549,16 +414,11 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
                 senderPeerSlot);
         return;
     }
-    const uint64_t hash = coop::blob_chunks::Fnv64(blob);
-    HostEntry& e = g_hostBySlot[senderPeerSlot];
-    if (e.hash == hash && !e.guid.empty()) return;  // unchanged (dedup)
-    e.guid = guid;
-    e.blob = std::move(blob);
-    e.hash = hash;
-    e.nick = NickForJson(coop::player_handshake::NicknameForSlot(senderPeerSlot));  // GT snapshot
-    e.dirty = true;
-    // Write now if the rate-limit window has passed; else the host tick flushes it.
-    if (Clock::now() - e.lastWrite >= kWriteRate) FlushSlot(senderPeerSlot);
+    // Held in memory, by GUID; the disk copy is cut with the host's world save (the store's header
+    // says why no other moment will do).
+    coop::player_profile_store::Put(guid, std::move(blob),
+                                    coop::player_profile_store::NickForJson(
+                                        coop::player_handshake::NicknameForSlot(senderPeerSlot)));
 }
 
 // The single-player starter items: the game's begin-equipment logic gives exactly these three
@@ -642,8 +502,15 @@ bool SendInventoryToSlot(int peerSlot) {
         return false;  // not sent -> caller does not latch; retries when the GUID lands
     }
     std::vector<uint8_t> blob;
-    if (!ReadBlobFile(guid, blob) || !LiftProjectionProfile(blob)) {
-        // First join (no persisted file, or corrupt with no .bak): seed the starter kit so the
+    namespace PS = coop::player_profile_store;
+    const PS::Found found = PS::Get(guid, blob);
+    // A profile that is there and does not read (a corrupt or locked file, a blob of a build this
+    // one cannot parse) is a RETURNING player: they get the kit for this session, and nothing they
+    // stream back may be written over what is on disk.
+    const bool usable = found == PS::Found::Yes && LiftProjectionProfile(blob);
+    if (!usable && found != PS::Found::Absent) PS::Quarantine(guid);
+    if (!usable) {
+        // First join (nothing held and no stored file), or the quarantined case above: seed the starter kit so the
         // player is not dropped into the host's world empty-handed (a loaded coop save runs no
         // begin-equipment, so they would be). Read off the host's own live inventory, filtered to
         // the three starter classes; if the kit is absent, degrade to empty, never to the host's
@@ -683,18 +550,16 @@ bool TakeJoinPose(float& x, float& y, float& z, float& yaw) {
 void OnDisconnectForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    FlushSlot(peerSlot);                 // last authoritative state to disk
-    if (peerSlot >= 0 && peerSlot < coop::net::kMaxPeers) {
-        g_hostBySlot[peerSlot] = HostEntry{};
+    // The leaver's profile stays held by GUID: a rejoin gets it back, and the next save of the
+    // host's world cuts it to disk with everyone else's.
+    if (peerSlot >= 0 && peerSlot < coop::net::kMaxPeers)
         g_applySentToSlot[peerSlot] = false;  // a rejoin re-pushes the apply blob
-    }
 }
 
 void OnDisconnect() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (s && s->role() == coop::net::Role::Host) {
-        for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlot(slot);
-    }
+    // Host: nothing to do. This edge is "the last client left", not "the hosted world ended": what
+    // is held stays for a rejoin and for the next save (the store drops it when another world is
+    // loaded to host).
     // Client: reset the send dedup so a reconnect re-streams, and drop any pending apply blob and
     // its assembler, so a rejoin waits for a fresh host push and never applies a stale inventory
     // to a new world.
@@ -709,12 +574,6 @@ void OnDisconnect() {
     g_profileApplied = false;
     g_pendingApply = coop::player_profile::Profile{};
     g_clientAssembler.Clear();
-}
-
-void FlushAllToDisk() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host) return;
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlot(slot);
 }
 
 }  // namespace coop::player_inventory_sync

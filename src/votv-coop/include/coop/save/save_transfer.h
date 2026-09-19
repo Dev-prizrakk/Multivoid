@@ -47,6 +47,11 @@ void SetHostSlot(const std::wstring& slot);
 // SetHostSlot. Game thread.
 const std::wstring& HostSlot();
 
+// How many times SetHostSlot has run. A process names the slot once per world it loads to host, so
+// this tells state that belongs to ONE loaded world (coop/player/player_profile_store) that
+// another has taken its place. Game thread.
+uint32_t HostSlotSerial();
+
 // A client asked for the save. Arms the slot's stream; the file read happens in TickHost under
 // the torn-read guard (the game writes saves non-atomically in place, so the file is trusted
 // only when its size and mtime are stable across consecutive polls and two full reads are

@@ -29,15 +29,14 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // runs those destructors after this callback, where un-rooting would deref a freed UObject
         // and walk a GUObjectArray UE has already torn down.
         ue_wrap::GcPin::StopReleases();
-        // PERSIST ONLY. The module is PINNED at start_mod (GET_MODULE_HANDLE_EX_FLAG_PIN in
+        // THE LOG ONLY. The module is PINNED at start_mod (GET_MODULE_HANDLE_EX_FLAG_PIN in
         // cppmod_entry.cpp), so FreeLibrary cannot unload us and this branch is ALWAYS process
         // exit, where every other thread is already dead. Calling the full shutdown from here would
         // take the loader lock through Session::Stop's thread join and ~200 ms linger pump, the
         // signaling client's WSACleanup, and two MinHook uninstall passes that freeze threads --
         // the deadlock risk ue_wrap/core/hook.cpp already carries -- to quiesce what has already
-        // stopped. The durable write is the part that still matters at process exit, so it is the
-        // only part left.
-        coop::shutdown::PersistAtProcessExit();
+        // stopped.
+        coop::shutdown::FlushLogAtProcessExit();
     }
     return TRUE;
 }

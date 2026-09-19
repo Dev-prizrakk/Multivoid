@@ -242,8 +242,8 @@ void Install(coop::net::Session& session) {
     // world-up, but the apply-blob receiver and the pre-materialise save hook must be live before
     // the join's world loads. Its tick and per-slot hooks below stay.
     coop::balance_sync::SetSession(&session);  // shared host-authoritative balance
-    // The client world-save block: a no-op on the host; on the client it installs the save detour
-    // once.
+    // The client world-save block: registers its gate and arms the one save detour, in every
+    // role (the gate reads the role when a save fires; a host's save passes and is reported).
     coop::save_block::Install(&session);
     // Grey out the client pause menu's Save button; a no-op on the host.
     coop::save_button_disable::Install(&session);
@@ -387,7 +387,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::sleep_sync::OnDisconnectForSlot(slot);  // drop the leaver from the sleep tally (re-gate)
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
     coop::hook_sync::OnPeerLeftSlot(slot);  // the leaver's OWNER-PHASE hook mirrors; anchored ones are the host's and stay
-    coop::player_inventory_sync::OnDisconnectForSlot(slot);  // flush the leaver's inventory to <guid>.json
+    coop::player_inventory_sync::OnDisconnectForSlot(slot);  // re-arm the on-join push; the leaver's profile stays held
 }
 
 DisconnectStats DisconnectAll() {
@@ -478,7 +478,7 @@ DisconnectStats DisconnectAll() {
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
     coop::wisp_tear_mirror::OnDisconnect();  // clear any armed victim-death deadline
     coop::wisp_grab_hold::OnDisconnect();  // release a live self-grab (un-strand MOVE_None) and drop the holds
-    coop::player_inventory_sync::OnDisconnect();  // host flush all inventories; client clear send-dedup
+    coop::player_inventory_sync::OnDisconnect();  // client: clear the send-dedup and any pending apply; host: nothing
     coop::email_sync::OnDisconnect();
     coop::signal_sync::OnDisconnect();
     coop::meadow_db_sync::OnDisconnect();  // shadow + pending + tombstones + seed snapshots
@@ -614,7 +614,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // isSleep edge poll + WAITING dilation enforcement + the client need clamp
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // inventory read-verify self-test (no-op unless inventory_selftest=1)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // the client's profile stream / the host's on-join push (+ the inventory_selftest=1 read-verify)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) by content (no-op unless live_store_readout=1)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
     // The trash pile collect-counter poll and depletion death-watch; a chipPile re-grab fires from

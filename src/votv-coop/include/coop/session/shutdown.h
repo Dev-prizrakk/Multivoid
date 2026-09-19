@@ -40,24 +40,22 @@ void UpdateWindowTitle();
 // Run the cleanup sequence: the flag, the session stop, the sleep, disable the ProcessEvent
 // patch, lift every remaining patch. Frees nothing (see hook.h). Idempotent; safe from any
 // thread, the internal mutex serialises. Not callable from process detach; see
-// PersistAtProcessExit.
+// FlushLogAtProcessExit.
 void DoShutdown();
 
-// The only teardown work the process-detach path may do: write the host's per-peer inventory
-// to disk, and nothing else. The detach branch once ran the full shutdown under a claim that
-// it only set a flag and uninstalled the detour; it does far more, and seven of the
-// operations it reaches are hostile under the loader lock: it takes the slow mutex (at
-// process exit the owner may be a thread Windows already terminated, and such a mutex never
-// unlocks); the session stop joins the net thread, closes connections with a network-I/O
-// linger loop, and resets the signaling socket; a sleep; the game-thread uninstall reaches
-// MinHook's thread freeze (a toolhelp snapshot plus thread suspends) with another sleep; and
-// the blanket disable reaches the same freeze, a documented deadlock risk on this path. None
-// of it is useful here: the loader pins the module before anything else, so this branch runs
-// only at process exit, where Windows has already terminated every other thread; quiescing
-// waits on the dead, persisting does not. So persist and get out of the way, not gated on
-// the shutdown latch (a flush terminated mid-teardown may never have happened, and
-// re-flushing is free, since it self-guards on its dirty bit); the flush takes no locks. A
-// hard crash delivers no detach, so the inventory write-rate window is a separate defect.
-void PersistAtProcessExit();
+// The only work the process-detach path may do: flush the log, and nothing else. The detach
+// branch once ran the full shutdown under a claim that it only set a flag and uninstalled the
+// detour; it does far more, and seven of the operations it reaches are hostile under the loader
+// lock: it takes the slow mutex (at process exit the owner may be a thread Windows already
+// terminated, and such a mutex never unlocks); the session stop joins the net thread, closes
+// connections with a network-I/O linger loop, and resets the signaling socket; a sleep; the
+// game-thread uninstall reaches MinHook's thread freeze (a toolhelp snapshot plus thread
+// suspends) with another sleep; and the blanket disable reaches the same freeze, a documented
+// deadlock risk on this path. None of it is useful here: the loader pins the module before
+// anything else, so this branch runs only at process exit, where Windows has already terminated
+// every other thread; quiescing waits on the dead. Nothing of the session is persisted here
+// either: a player's profile is cut to disk with the host's world save and at no other moment
+// (coop/player/player_profile_store.h).
+void FlushLogAtProcessExit();
 
 }  // namespace coop::shutdown

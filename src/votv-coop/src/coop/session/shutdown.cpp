@@ -4,7 +4,6 @@
 #include "coop/session/shutdown.h"
 
 #include "coop/net/session.h"
-#include "coop/items/player_inventory_sync.h"  // the shutdown inventory flush
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
@@ -200,10 +199,6 @@ void DoShutdown() {
     UE_LOGI("shutdown: BEGIN cleanup (flag set; session=%p hwnd=%p)",
             g_session, g_subclassedHwnd.load(std::memory_order_relaxed));
 
-    // Flush each connected peer's last inventory blob to <guid>.json BEFORE the session stops;
-    // after Stop the slots are gone. Pure file I/O on captured bytes, so it is safe here.
-    coop::player_inventory_sync::FlushAllToDisk();
-
     if (g_session) g_session->Stop();
     ::Sleep(100);  // let detached pollers observe g_shuttingDown
     ue_wrap::game_thread::Uninstall();
@@ -218,27 +213,18 @@ void DoShutdown() {
     UE_LOGI("shutdown: END cleanup");
 }
 
-void PersistAtProcessExit() {
-    // See the header for the full census of what this deliberately does NOT do
-    // and why. Everything here must be safe under the loader lock with every
-    // other thread already terminated: no mutex, no join, no socket, no hook
-    // teardown, no sleep.
+void FlushLogAtProcessExit() {
+    // See the header for the census of what this deliberately does NOT do and why. Everything
+    // here must be safe under the loader lock with every other thread already terminated: no
+    // mutex, no join, no socket, no hook teardown, no sleep.
     //
-    // The flag first, and via the same atomic DoShutdown uses -- it costs
-    // nothing and it means any thread that somehow survived stops on its next
-    // check. It is NOT used to gate the flush below.
+    // The flag first, and via the same atomic DoShutdown uses -- it costs nothing and it means
+    // any thread that somehow survived stops on its next check.
     g_shuttingDown.store(true, std::memory_order_release);
 
-    // The flush is the whole point. Lock-free, writes the game-thread snapshot
-    // captured in OnReliable, self-guards on each slot's dirty bit -- so a
-    // second flush after the wndproc path already ran is a cheap no-op rather
-    // than a hazard, which is why this is not gated on g_didShutdown.
-    coop::player_inventory_sync::FlushAllToDisk();
-
-    // One line, then flush the log: on this path there is no later opportunity,
-    // and the line is the only evidence the branch ran at all.
-    UE_LOGI("shutdown: process-exit persist done (inventory flushed; teardown "
-            "deliberately skipped -- loader lock)");
+    // One line, then flush the log: on this path there is no later opportunity, and the line is
+    // the only evidence the branch ran at all.
+    UE_LOGI("shutdown: process exit (teardown deliberately skipped -- loader lock)");
     ue_wrap::log::Flush();
 }
 

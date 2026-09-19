@@ -79,6 +79,7 @@ bool ReadWholeFile(const fs::path& p, std::vector<uint8_t>& out) {
 // The host side, game thread only: OnRequest, TickHost, CancelForSlot.
 
 std::wstring g_hostSlot;  // the slot the host's world was loaded from
+std::atomic<uint32_t> g_hostSlotSerial{0};  // one per SetHostSlot, i.e. per world loaded to host (the boot load names it off the game thread)
 
 // The torn-read guard: VOTV's saveToSlot writes the .sav in place, so a join landing mid-write
 // would read a torn blob. The file is trusted only when its size and mtime are stable across two
@@ -407,6 +408,8 @@ std::wstring CoopSlotName() { return CoopSlotFileNameNoExt_(); }
 
 const std::wstring& HostSlot() { return g_hostSlot; }
 
+uint32_t HostSlotSerial() { return g_hostSlotSerial.load(std::memory_order_acquire); }
+
 void Install(coop::net::Session* session) {
     g_session = session;
     session->SetBulkSink(&BulkSink_);
@@ -418,6 +421,7 @@ void Install(coop::net::Session* session) {
 
 void SetHostSlot(const std::wstring& slot) {
     g_hostSlot = slot;
+    g_hostSlotSerial.fetch_add(1, std::memory_order_release);
     UE_LOGI("save_transfer: host slot = '%ls'", slot.c_str());
 }
 

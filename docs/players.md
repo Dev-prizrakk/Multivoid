@@ -169,7 +169,14 @@ the player stood: a first join starts from the game's own defaults at the start 
 returning player gets their numbers back and appears at the last spot they were standing on
 (on the ground, not ragdolled, not seated: a position read while driving the ATV is not a place
 a body can be put back), and one who left dead starts a fresh life. The vitals and the position ride a change of the items at once and otherwise go every
-30 seconds. That identity is
+30 seconds. The host holds the newest profile of every player in memory for as long as the hosted
+world lives, so a rejoin gets back what the player left with, and writes the profiles to disk
+only with its own world save (`coop/player/player_profile_store`): a pocketed item has left the
+world and entered the profile, so a stored profile newer than the saved world would hold that
+item twice after a host restart, and an older one would lose it. A host that quits without
+saving takes its players' profiles back to its last save together with its world. The copy that
+is written is the one taken when the game gathered the world into its save object, which during
+a game event is not the moment of the save (see [join.md](join.md), the save transfer). That identity is
 a key file beside the game executable, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is
