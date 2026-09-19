@@ -57,6 +57,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_attach.cpp
     src/ue_wrap/devices/door.cpp
     src/ue_wrap/devices/base_window.cpp
+    src/ue_wrap/devices/cremator.cpp
     src/ue_wrap/devices/grime.cpp
     src/ue_wrap/world/daynightcycle.cpp
     src/ue_wrap/world/skysphere.cpp

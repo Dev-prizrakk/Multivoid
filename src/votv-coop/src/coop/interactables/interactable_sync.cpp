@@ -9,6 +9,7 @@
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
 
 #include "ue_wrap/devices/appliance.h"     // the six-class save-actor toggle family
+#include "ue_wrap/devices/cremator.h"      // the incinerator: the hatch door's identity anchor
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/devices/door_box.h"      // lockers and the drone-console box
 #include "ue_wrap/engine/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
@@ -129,7 +130,39 @@ const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
     &ue_wrap::swinger::EnsureResolved,
     &ue_wrap::swinger::IsSwinger,
-    &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
+    // The container key: the Aprop_C save Key, with one designed exception. The cremator's hatch
+    // door is a TOP-LEVEL, RUNTIME-SPAWNED swinger (the cremator's BeginPlay makes it), so its
+    // own Key is either None or a per-peer NewGuid -- in both cases it names nothing cross-peer,
+    // and the index never held the door, which is the incinerator door that diverged (the lever's
+    // own "hatch sealed" check then refuses on one peer and passes on the other). The anchored
+    // name instead: the NEAREST cremator's portable identity plus "/crematorDoor", the same
+    // parent-plus-suffix shape a child actor's identity takes, expressed at our layer because
+    // this spawn is an actor rather than a component child. Both peers derive it identically
+    // from the same world (the cremator is level-placed, its identity is its save key or its
+    // baked level name). The door's own verbs and its `opened` bool are the swinger family's,
+    // so the rest of the channel drives it unchanged.
+    [](void* a) -> std::wstring {
+        if (ue_wrap::cremator::EnsureResolved() && ue_wrap::cremator::IsCrematorDoor(a)) {
+            void* best = nullptr;
+            float bestD2 = 0.f;
+            const ue_wrap::FVector doorLoc = ue_wrap::engine::GetActorLocation(a);
+            for (void* cm : ue_wrap::cremator::Instances()) {
+                const ue_wrap::FVector cmLoc = ue_wrap::engine::GetActorLocation(cm);
+                const float dx = cmLoc.X - doorLoc.X;
+                const float dy = cmLoc.Y - doorLoc.Y;
+                const float dz = cmLoc.Z - doorLoc.Z;
+                const float d2 = dx * dx + dy * dy + dz * dz;
+                if (!best || d2 < bestD2) { best = cm; bestD2 = d2; }
+            }
+            if (best) {
+                const std::wstring base = coop::element::PortableIdentity(best);
+                if (!base.empty()) return base + L"/crematorDoor";
+            }
+            return std::wstring();  // no live cremator to anchor to yet: this hub pass skips the
+                                    // door, the next pass (2 s) retries with a fresh instance cache
+        }
+        return ue_wrap::prop::GetKeyString(a);
+    },
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
