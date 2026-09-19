@@ -14,6 +14,7 @@
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_mirror.h"
 #include "ue_wrap/actors/chip_pile.h"
+#include "ue_wrap/actors/prop.h"              // IsChipPile
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -58,8 +59,13 @@ void RunPileLookScenario() {
 
     RunGT([client](std::atomic<int>& d) {
         int named = 0, unnamed = 0;
-        for (void* o : R::FindObjectsByClass(L"actorChipPile_C")) {
-            if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+        // Every pile class, the variants included: a walk of the object array with the pile test,
+        // where a lookup by one class name would count actorChipPile_C alone.
+        const int32_t n = R::NumObjects();
+        for (int32_t i = 0; i < n; ++i) {
+            void* o = R::ObjectAt(i);
+            if (!o || !R::IsLive(o) || !ue_wrap::prop::IsChipPile(o)) continue;
+            if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
             const coop::element::ElementId eid =
                 client ? coop::remote_prop::ResolveMirrorEidByActor(o)
                        : coop::prop_element_tracker::GetPropElementIdForActor(o);
@@ -67,8 +73,11 @@ void RunPileLookScenario() {
             const ue_wrap::FRotator m = ue_wrap::chip_pile::VisibleMeshWorldRotation(o);
             const ue_wrap::FRotator a = E::GetActorRotation(o);
             const char* kind = !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save");
-            UE_LOGI("pilelook: PILE eid=%u kind=%s mesh=(%.1f,%.1f,%.1f) actor=(%.1f,%.1f,%.1f)",
-                    static_cast<unsigned>(eid), kind, m.Pitch, m.Yaw, m.Roll, a.Pitch, a.Yaw, a.Roll);
+            ue_wrap::chip_pile::Look look{};
+            ue_wrap::chip_pile::ReadLook(o, look);
+            UE_LOGI("pilelook: PILE eid=%u kind=%s mesh=(%.1f,%.1f,%.1f) actor=(%.1f,%.1f,%.1f) scale=(%.3f,%.3f,%.3f)",
+                    static_cast<unsigned>(eid), kind, m.Pitch, m.Yaw, m.Roll, a.Pitch, a.Yaw, a.Roll,
+                    look.relScale.X, look.relScale.Y, look.relScale.Z);
             ++named;
         }
         UE_LOGI("pilelook: DONE named=%d unnamed=%d", named, unnamed);

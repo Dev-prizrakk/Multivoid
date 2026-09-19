@@ -9,6 +9,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/remote_prop.h"            // ResolveMirrorEidByActor
 #include "coop/props/prop_element_tracker.h"   // the thrown clump's eid, for the verdict
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace harness::autotest {
 namespace {
@@ -92,48 +94,38 @@ void RunHost() {
     ::Sleep(7000);   // the flight, the impact, the re-pile and its settle
 }
 
-// The client half: follow the clump the host's puppet is carrying. The clump nearest the puppet
-// is the carried one; a first-live-clump pick latched onto unrelated litter elsewhere in the world.
+// The client half: sample EVERY live clump mirror it can name, by eid, at 20 Hz. The driver keeps
+// the thrown eid's samples. Following one clump picked by nearness latched onto whatever else lay or
+// was carried near the host -- a hand on a rig window is enough.
 void RunClient() {
-    UE_LOGI("hostthrow: CLIENT watcher -- sampling the clump nearest the host's puppet at 20 Hz");
-    const ULONGLONG tEnd = ::GetTickCount64() + 360000;
+    UE_LOGI("hostthrow: CLIENT watcher -- sampling every named clump mirror at 20 Hz");
+    const ULONGLONG t0   = ::GetTickCount64();
+    const ULONGLONG tEnd = t0 + 360000;
+    // Kept across ticks, so each pointer travels with its object-array slot: a clump dies at its
+    // land, and IsLive on a freed pointer can read true.
+    struct Seen { void* actor; int32_t idx; };
+    auto clumps = std::make_shared<std::vector<Seen>>();
+    int pass = 0;
     while (::GetTickCount64() < tEnd) {
-        auto found = std::make_shared<void*>(nullptr);
-        RunGT([found](std::atomic<int>& d) {
-            coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(0);
-            void* host = (rp && rp->valid()) ? rp->GetActor() : nullptr;
-            if (host) {
-                const ue_wrap::FVector hp = E::GetActorLocation(host);
-                float best = 400.f * 400.f;   // within arm's length and a bit
-                for (void* o : R::FindObjectsByClass(L"prop_garbageClump_C")) {
-                    if (!o || !R::IsLive(o)) continue;
-                    const ue_wrap::FVector cp = E::GetActorLocation(o);
-                    const float dx = cp.X - hp.X, dy = cp.Y - hp.Y, dz = cp.Z - hp.Z;
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 < best) { best = d2; *found = o; }
-                }
+        const bool refresh = (pass++ % 5) == 0;   // the object-array walk at 4 Hz, the samples at 20
+        RunGT([clumps, refresh, t0](std::atomic<int>& d) {
+            if (refresh) {
+                clumps->clear();
+                for (void* o : R::FindObjectsByClass(L"prop_garbageClump_C"))
+                    if (o) clumps->push_back(Seen{o, R::InternalIndexOf(o)});
+            }
+            for (const Seen& c : *clumps) {
+                void* o = c.actor;
+                if (!R::IsLiveByIndex(o, c.idx) || !ue_wrap::prop::IsGarbageClump(o)) continue;
+                const coop::element::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(o);
+                if (eid == coop::element::kInvalidId || eid == 0) continue;
+                const ue_wrap::FVector at = E::GetActorLocation(o);
+                UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms eid=%u mirror=%p pos=(%.1f,%.1f,%.1f)",
+                        ::GetTickCount64() - t0, static_cast<unsigned>(eid), o, at.X, at.Y, at.Z);
             }
             d.store(1);
         });
-        if (!*found) { ::Sleep(500); continue; }
-        const ULONGLONG t0 = ::GetTickCount64();
-        UE_LOGI("hostthrow: CLIENT watcher -- following clump mirror %p", *found);
-        for (;;) {
-            auto alive = std::make_shared<bool>(false);
-            RunGT([found, alive, t0](std::atomic<int>& d) {
-                if (R::IsLive(*found) && ue_wrap::prop::IsGarbageClump(*found)) {
-                    *alive = true;
-                    const ue_wrap::FVector at = E::GetActorLocation(*found);
-                    UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms mirror=%p pos=(%.1f,%.1f,%.1f)",
-                            ::GetTickCount64() - t0, *found, at.X, at.Y, at.Z);
-                }
-                d.store(1);
-            });
-            if (!*alive) break;
-            ::Sleep(50);
-        }
-        UE_LOGI("hostthrow: CLIENT watcher -- clump mirror %p gone after %llu ms (landed or retired)",
-                *found, ::GetTickCount64() - t0);
+        ::Sleep(50);
     }
 }
 
