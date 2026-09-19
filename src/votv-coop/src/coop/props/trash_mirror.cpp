@@ -98,10 +98,11 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     made.ownerSlot = senderSlot;
     if (!made.pin.Pin(native)) {                    // GC-pin -- a runtime spawn has no save/world ref
         // A failed pin voids the mirror's whole rules-of-existence argument (rooted -> never
-        // GC'd -> never a stale index), so it must never fail silently.
+        // GC'd -> never a stale index), so it must never fail silently. The entry STAYS, with an
+        // empty pin: it is also the only record that this actor is one we spawned, and without it
+        // Retire keeps the mirror alive as "the client's own" and OnDisconnect leaves it a ghost.
         UE_LOGW("[PILE] trash_mirror: GC PIN FAILED for native=%p eid=%u -- this mirror "
                 "can be collected out from under its cached pointer", native, eid);
-        g_made.erase(native);
     }
     // The parking, classified (coop-sync-doctrine step 4). Each removes a SECOND AUTHOR of a state
     // the host already authors and replicates -- the pose, and the pile-clump transition -- so
