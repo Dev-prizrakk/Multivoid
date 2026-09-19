@@ -33,6 +33,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **hediiiqq** | code · report | Dish mirror interpolation; a CI gate failing every build on the unfetched MTA submodule ([#10](https://github.com/VOTV-MP/Multivoid/issues/10)) | 1 commit · #10 |
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
+| **Marlore** | code · report | A nine-symptom pass over the trash carry ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)). Four were real defects and are fixed at the root, co-authored: a refused grab that was never answered, a pile that looked different on every peer (865 of 871 measured), a thrower refused every later grab, and a fallen player who kept carrying | 6 commits · unreleased |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
 | **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); and design published for [Relay](https://github.com/modestimpala/Relay), Moddy's Blueprint networking API for VOTV ([Thunderstore](https://thunderstore.io/c/voices-of-the-void/p/Moddy/Relay/)), in its README and the [README Blueprint](https://blueprintue.com/blueprint/g3s09x9c/) that README links: the watch surface on a Blueprint function, a watch that reads the parameters before the call and can cancel it, and one that only observes after it, which became the script-body gate; the readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; the list of cheap edge protections, of which two were missing here: a per-source limit on connections and a private access list on the identity key file; the rule columns that make an actor's own save record its spawn payload, the general form of what this project's prop save-data work was building case by case; the client-only `Quiesce` column, which made this project state its parking rule once and read every park against it; the one paragraph on container handling, which made it write down and measure its own container invariants; and the note that a watch on a parent class misses a child's override, which sent us to audit every hook we install, which found three seams that had never installed and two verbs called on the wrong class | b122 · b143 · 2026-09-02 · b153 · b157 · b160 · b161 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
@@ -92,6 +93,33 @@ Community commits are adopted with their **original authorship preserved**
   peer walking up to an ATV somebody else is already driving is denied at the
   input seam, instead of both engines running vehicle physics and fighting over
   the body.
+
+### Marlore
+- **The trash carry, as a player met it** ([#29](https://github.com/VOTV-MP/Multivoid/pull/29)):
+  two commits written against a live session, naming nine things that went wrong. The patch
+  could not be merged as written (it sits on the history withdrawn in September, and each hunk
+  was measured against the tree before anything was taken), so every symptom was re-run from
+  our own chair with a drill, and what reproduced was fixed where it starts. Four did, and the
+  commits carry their name:
+  - **A refused grab was never answered.** The client's request stayed pending, so the next
+    grab of that pile by anybody else read as its own confirmation and its use presses became
+    throws of a clump it did not hold. The host now answers every refusal, to the one who
+    asked, by request number.
+  - **A pile looked different on every peer.** The pull request pointed at the pile's rotation;
+    the census that followed measured 865 of 871 piles turned differently on the two machines.
+    The game re-rolls the visible mesh's turn and size on every construction and saves neither,
+    so the host's look now travels with the pile.
+  - **A thrower refused every later grab.** Their fix ended the hold at the throw; that half is
+    what shipped. A hold used to last until the clump landed as a pile, and a clump that comes
+    to rest on a box never does.
+  - **A player who fell kept carrying.** The game drops what a fainting player holds, but a
+    client's clump is in its puppet's hand on the host, where that drop cannot reach.
+  Beside those: a trash mirror whose GC pin fails is no longer forgotten as one we made (the
+  pull request destroyed it; the defect under that was a lost record), and the drill that watches
+  a host-thrown clump from the client exists because their report asked the question.
+  One did not reproduce on the current tree on either path (a thrown clump frozen in the air),
+  and three turned out to be the tree already doing the right thing; the pull request thread
+  says which and why.
 
 ### huoyan1231
 - CI and automated builds (`.github/workflows`).
