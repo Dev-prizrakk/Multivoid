@@ -63,7 +63,7 @@ void SendGrabIntent(coop::net::Session& s, uint32_t eid);
 // Host: `senderSlot` asked to grab `eid`. Gated on the eid not already carrying and the sender
 // not already holding one. On pass: grab on the puppet, open the carry, record the holder and
 // register the per-tick hand drive. Denied is a logged no-op.
-void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot);
+void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t senderSlot);
 
 // Client: request the throw of `eid`. The release mode is the use-press drop and ignores `dir`;
 // the hard-throw mode carries the camera-forward unit vector at the press.
@@ -82,6 +82,10 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
 // Client: reconcile the carry state against an observed convert. A to-clump matching our pending
 // grab confirms the carry; a to-pile for the carried eid clears it. A no-op on the host.
 void NoteClientConvertObserved(uint32_t eid, bool toClump);
+
+// Client: the host refused our GrabIntent for `eid` (GrabRefused). Ends the pending request, so a
+// later ToClump for that eid, somebody else's grab, is not taken for our confirmation.
+void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId);
 
 // Client: the trash eid this player carries, or the invalid id. The use-press toggle reads it.
 coop::element::ElementId ClientCarryEid();

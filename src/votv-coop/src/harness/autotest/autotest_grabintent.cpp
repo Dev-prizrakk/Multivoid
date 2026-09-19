@@ -100,6 +100,37 @@ void RunGrabIntentTest() {
             d.store(1);
         }) != 1) { UE_LOGW("grab_intent_test: could not pick a pile -- aborting"); return; }
 
+    // 1a. The refusal leg: stand 25 m from the pile, let the pose stream carry the puppet there,
+    // and send the grab. The host must refuse it for reach AND answer -- its DENIED line, then this
+    // client's own 'grab REFUSED ... pending grab cleared'. Step 2 brings the client back.
+    RunGT([pk](std::atomic<int>& d) {
+        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
+        float ax = at.X - pk->pilePos.X, ay = at.Y - pk->pilePos.Y;
+        const float h = std::sqrt(ax * ax + ay * ay);
+        if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
+        const ue_wrap::FVector away{ pk->pilePos.X + ax * 2500.f, pk->pilePos.Y + ay * 2500.f, pk->pilePos.Z + 90.f };
+        E::TeleportTo(pk->player, away, LookAt(away, pk->pilePos));
+        d.store(1);
+    });
+    ::Sleep(1500);
+    RunGT([pk](std::atomic<int>& d) {
+        // The distance is READ, not assumed: the engine may refuse a teleport destination, and a
+        // far grab sent from beside the pile would be performed and start the drill mid-carry.
+        const ue_wrap::FVector at = E::GetActorLocation(pk->player);
+        const float dx = at.X - pk->pilePos.X, dy = at.Y - pk->pilePos.Y, dz = at.Z - pk->pilePos.Z;
+        const float farCm = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (farCm < 2000.f) {
+            UE_LOGW("grab_intent_test: refusal leg SKIPPED -- the far teleport left the client %.0f cm from the pile", farCm);
+            d.store(1);
+            return;
+        }
+        const bool sent = coop::trash_collect_sync::DebugSendGrabIntent(pk->eid);
+        UE_LOGI("grab_intent_test: >>> FAR GRAB eid=%u from %.0f cm sent=%d -- the host must refuse it and say so <<<",
+                pk->eid, farCm, sent ? 1 : 0);
+        d.store(1);
+    });
+    ::Sleep(1500);
+
     // 2. Teleport the client to a standoff facing the pile, so the game's own look-at trace can hit
     // it and the puppet stands at the pile.
     RunGT([pk](std::atomic<int>& d) {

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 162;
+inline constexpr uint16_t kProtocolVersion = 163;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -709,6 +709,13 @@ enum class ReliableKind : uint8_t {
     // changed nothing.
     // BroomStrokePayload.
     BroomStroke = 139,
+    // The host tells ONE client that its GrabIntent was not performed, and why. HOST->CLIENT,
+    // addressed with SendReliableToSlot, never relayed (the OrderRefused shape). A grab that is
+    // performed is answered by the PropConvert{kToClump} every peer receives; a refusal used to be
+    // answered by nothing, so the requester kept waiting and took the NEXT ToClump for that eid,
+    // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
+    // one request. GrabRefusedPayload.
+    GrabRefused = 140,
 };
 
 #pragma pack(push, 1)
@@ -2168,10 +2175,32 @@ static_assert(sizeof(PropConvertPayload) == 124, "PropConvertPayload must be 124
 // A grab intent (GrabIntent): the eid of the mirrored pile the client wants; intent only, no state.
 struct GrabIntentPayload {
     uint32_t eid;        // the trash entity eid the client requests to grab
-    uint8_t  _pad[4];    // 8-byte alignment; bytes-beyond-eid zero
+    uint16_t reqId;      // the sender's request counter; a GrabRefused echoes it, so an answer to an
+                         // earlier request for the same eid cannot end a later one
+    uint8_t  _pad[2];    // 8-byte alignment; zero
 };
 static_assert(sizeof(GrabIntentPayload) == 8, "GrabIntentPayload must be 8 bytes");
 static_assert(sizeof(GrabIntentPayload) <= 256 - 20 - 8, "GrabIntentPayload must fit one datagram");
+
+// Why the host refused a grab intent (GrabRefused). The client's handling is the same for every
+// reason -- the request is over -- and the reason is there for the log a player sends us.
+enum class GrabRefusedReason : uint8_t {
+    AlreadyHeld  = 1,   // the pile's carry latch is open: somebody holds it
+    SlotBusy     = 2,   // the sender already holds another clump
+    PuppetGone   = 3,   // the sender's puppet is not live on the host
+    OutOfReach   = 4,   // the pile is real and the sender is not near it
+    Unresolvable = 5,   // the eid names nothing on the host
+    NotAPile     = 6,   // the eid names a live actor that is not a chip pile
+    NoVerb       = 7,   // the game's grab verb did not resolve
+    NoClump      = 8,   // the grab verb ran and left no clump in the puppet's hand
+};
+struct GrabRefusedPayload {
+    uint32_t eid;        // 4 -- the eid the refused GrabIntent named
+    uint8_t  reason;     // 1 -- GrabRefusedReason
+    uint8_t  _pad;       // 1
+    uint16_t reqId;      // 2 -- the refused GrabIntent's reqId
+};
+static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 bytes");
 
 // A throw intent (ThrowIntent). mode kRelease: the native drop; the host derives the launch from
 // the puppet's smoothed hand motion. mode kHardThrow: the native camera-directed throw; the client

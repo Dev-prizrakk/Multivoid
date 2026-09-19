@@ -124,7 +124,8 @@ inline Lane LaneForKind(ReliableKind k) {
     // sharing the destroy lane keeps the forward in the same FIFO. Moves with PropDestroy.
     case ReliableKind::CoinCollect:    return Lane::Bulk;
     // CoinGunResult is host-to-one-client and deliberately unpinned: it is ordered against nothing,
-    // and takes the default by decision.
+    // and takes the default by decision. GrabRefused likewise: PropConvert rides Bulk, and what
+    // keeps a refusal from ending the wrong request is its reqId, never lane order.
     case ReliableKind::MeadowOrder:    return Lane::Normal;  // an order line must not overtake the append it references
     // RosterRow and the email and signal families are pinned to the default they ride: the
     // ready-edge seed's exactly-once and clear-before-chunks arguments need the roster transition,

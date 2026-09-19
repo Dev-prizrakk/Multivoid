@@ -48,6 +48,7 @@ std::unordered_map<uint32_t, uint8_t> g_heldBy;
 // 0 means none.
 uint32_t g_clientPendingGrab = 0;
 uint32_t g_clientCarry       = 0;
+uint16_t g_clientGrabReq     = 0;   // the client's request counter: a GrabRefused answers one request, by this number
 
 }  // namespace
 
@@ -76,7 +77,8 @@ void SendGrabIntent(coop::net::Session& s, uint32_t eid) {
         return;
     }
     coop::net::GrabIntentPayload p{};
-    p.eid = eid;
+    p.eid   = eid;
+    p.reqId = ++g_clientGrabReq;
     s.SendReliable(coop::net::ReliableKind::GrabIntent, &p, sizeof(p));
     g_clientPendingGrab = eid;   // a request in flight: the matching inbound ToClump confirms the carry
     UE_LOGI("[GRAB-INTENT] CLIENT SENT eid=%u -> host (pending grab)", eid);
@@ -128,15 +130,40 @@ void ClearClientCarry(uint32_t eid) {
     if (eid != 0 && eid == g_clientPendingGrab) g_clientPendingGrab = 0;  // also drop a pending request for a vanished eid
 }
 
+void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId) {
+    // The LATEST request only: a refusal of an earlier request for this same eid must not end a
+    // later one the host is about to perform, or the host would hold a clump for a client that
+    // believes it carries nothing.
+    const bool ours = (eid != 0u && eid == g_clientPendingGrab && reqId == g_clientGrabReq);
+    if (ours) g_clientPendingGrab = 0;
+    UE_LOGI("[GRAB-INTENT] CLIENT grab REFUSED eid=%u reason=%u req=%u -- %s", eid,
+            static_cast<unsigned>(reason), static_cast<unsigned>(reqId),
+            ours ? "pending grab cleared" : "not the request in flight (an earlier one, or none) -- ignored");
+}
+
 // The host executors.
 
-void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
+// Host: answer a refused grab, to the requester alone. Without it the requester's pending grab
+// outlives the refusal, and the next ToClump for that eid -- the host's grab, a third peer's --
+// reads as its own confirmation: it believes it carries a clump it does not hold, and its use
+// presses become throw intents. Reported from the field in pull request 29.
+static void Refuse(coop::net::Session& s, uint8_t slot, uint32_t eid, uint16_t reqId,
+                   coop::net::GrabRefusedReason reason) {
+    coop::net::GrabRefusedPayload p{};
+    p.eid    = eid;
+    p.reason = static_cast<uint8_t>(reason);
+    p.reqId  = reqId;
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::GrabRefused, &p, sizeof(p));
+}
+
+void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t senderSlot) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
-    // Gate 1, the door can-open analog: already carrying means mid-hold, so deny. The host's
-    // convert stream already conveys the true state to the requester; no correction packet is
-    // needed.
+    // Gate 1, the door can-open analog: already carrying means mid-hold, so deny. Every refusal
+    // below is ANSWERED (Refuse): the convert stream tells the requester what the pile is, never
+    // that its own request is over.
     if (IsCarrying(static_cast<coop::element::ElementId>(eid))) {
         UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- already HELD (carry latch open)", eid, senderSlot);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::AlreadyHeld);
         return;
     }
     // There is no context-generation gate: the context is written only when an eid has already
@@ -147,6 +174,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     for (const auto& kv : g_heldBy) {
         if (kv.second == senderSlot) {
             UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- slot already holds eid=%u", eid, senderSlot, kv.first);
+            Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::SlotBusy);
             return;
         }
     }
@@ -156,6 +184,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     if (!puppet) {
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live", eid, senderSlot);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::PuppetGone);
         return;
     }
     // Resolve the eid to the host's pile actor and ask whether this sender may name it. The
@@ -180,6 +209,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- REASON=%s (dist=%.0f allowed=%.0f); the pile "
                 "is real and untouched, the sender is just not near it",
                 eid, senderSlot, coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::OutOfReach);
         return;
     }
 
@@ -205,6 +235,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         dp.key.len   = 0;   // eid-only: mirror rows are eid-keyed on every peer
         dp.elementId = eid;
         s.SendPropDestroy(dp);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::Unresolvable);
         return;
     }
     // The wrong-type outcome is checked first and short-circuits: an eid naming a non-prop Element
@@ -234,6 +265,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
             s_lastSmearHeal[eid] = healNow;
             coop::prop_snapshot::ExpressIncrementalSpawn(pile);
         }
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::NotAPile);
         return;
     }
 
@@ -254,6 +286,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     void* grabFn  = pileCls ? R::FindFunction(pileCls, L"playerGrabbed") : nullptr;
     if (!grabFn) {
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- playerGrabbed UFunction not found", eid, senderSlot);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::NoVerb);
         return;
     }
     {
@@ -269,8 +302,9 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     if (ue_wrap::engine::ReadMainPlayerGrabState(puppet, gs))
         clump = (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? gs.grabbingActor : nullptr;
     if (!clump) {
-        UE_LOGW("[GRAB-INTENT] eid=%u slot=%u -- playerGrabbed ran but no clump in grabbing_actor (denying)",
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- playerGrabbed ran but no clump in grabbing_actor",
                 eid, senderSlot);
+        Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::NoClump);
         return;
     }
     // Consume the birth certificate: the puppet's hand is this clump's hand edge (the owner-side

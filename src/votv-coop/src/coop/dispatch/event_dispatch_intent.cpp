@@ -199,6 +199,27 @@ bool HandleIntentEvent(net::Session& session,
         coop::kerfur_command::OnCommandRequest(p, senderSlot);
         break;
     }
+    case net::ReliableKind::GrabRefused: {
+        // HOST->CLIENT, one recipient, never relayed: the answer to a GrabIntent the host did not
+        // perform. coop::trash_channel::OnGrabRefused.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: GrabRefused received on the HOST -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: GrabRefused from senderPeerSlot=%d, not the host -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::GrabRefusedPayload)) {
+            UE_LOGW("event_feed: GrabRefused payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::GrabRefusedPayload));
+            break;
+        }
+        net::GrabRefusedPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::trash_channel::OnGrabRefused(p.eid, p.reason, p.reqId);
+        break;
+    }
     case net::ReliableKind::GrabIntent: {
         // CLIENT->HOST chipPile grab REQUEST. Host-authoritative (the DoorOpenRequest shape).
         // The host validates the eid is a tracked PILED pile and that the sender is not already
@@ -224,7 +245,7 @@ bool HandleIntentEvent(net::Session& session,
             break;
         }
         UE_LOGI("[GRAB-INTENT] RECEIVED eid=%u slot=%d", p.eid, msg.senderPeerSlot);
-        coop::trash_channel::OnGrabIntent(session, p.eid, static_cast<uint8_t>(msg.senderPeerSlot));
+        coop::trash_channel::OnGrabIntent(session, p.eid, p.reqId, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::BroomStroke: {
