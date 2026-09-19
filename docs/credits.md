@@ -114,7 +114,7 @@ Community commits are adopted with their **original authorship preserved**
     to rest on a box never does.
   - **A player who fell kept carrying.** The game drops what a fainting player holds, but a
     client's clump is in its puppet's hand on the host, where that drop cannot reach.
-  Beside those: a trash mirror whose GC pin fails is no longer forgotten as one we made (the
+  Beside those: a trash mirror whose GC pin fails is still kept as one we made (the
   pull request destroyed it; the defect under that was a lost record), and the drill that watches
   a host-thrown clump from the client exists because their report asked the question.
   One did not reproduce on the current tree on either path (a thrown clump frozen in the air),

@@ -98,7 +98,7 @@ by a few frames. Neither strands the id.
 
 Every open carry must eventually close, so the host's tick also terminates lanes the normal path
 would leave open: a clump destroyed mid-carry (consumed) closes the lane and broadcasts a destroy,
-so no client is stuck holding a dead mirror; a clump whose holder can hold no longer (it left, it
+so no client is stuck holding a dead mirror; a clump whose holder has stopped being able to hold (it left, it
 fell, its puppet is gone) is LET GO, never destroyed -- it falls as a still release does, its flight
 streams, and a holder still connected is told its carry is over; a clump left lying un-held closes
 the lane silently and leaves the clump world-tracked and re-grabbable, which is what single-player
