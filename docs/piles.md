@@ -97,8 +97,10 @@ commits a churn re-pile that the re-grab then re-opens, a brief flicker; too lon
 by a few frames. Neither strands the id.
 
 Every open carry must eventually close, so the host's tick also terminates lanes the normal path
-would leave open: a clump destroyed mid-carry (consumed, or its holder gone) closes the lane and
-broadcasts a destroy, so no client is stuck holding a dead mirror; a clump left lying un-held closes
+would leave open: a clump destroyed mid-carry (consumed) closes the lane and broadcasts a destroy,
+so no client is stuck holding a dead mirror; a clump whose holder can hold no longer (it left, it
+fell, its puppet is gone) is LET GO, never destroyed -- it falls as a still release does, its flight
+streams, and a holder still connected is told its carry is over; a clump left lying un-held closes
 the lane silently and leaves the clump world-tracked and re-grabbable, which is what single-player
 does. A clump re-piles only on a hit its own gate passes: its re-pile has armed, a random 0.5 to 1 s
 after its birth (1 to 2 s for a clump a pile kicks into being); its last holder's hand is empty; the

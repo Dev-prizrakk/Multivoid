@@ -195,6 +195,8 @@ void OpenCarry(coop::net::Session& s, coop::element::ElementId E, const ue_wrap:
                const std::string& cls, const char* why) {
     const uint32_t eid = static_cast<uint32_t>(E);
     CancelSettle(eid, why);
+    // A new carry of E: a puppet drive still streaming an EARLIER carry's flight is over.
+    coop::puppet_carry_drive::OnTakenOver(E);
     g_carry[eid].lastTick = g_tick;
     BroadcastConvert(s, E, coop::net::propconvert_kind::kToClump, loc, rot, scale, chipType, cls, why);
     UE_LOGI("[TRASH-CH] HOST carry OPEN eid=%u -- churn re-pile/re-grab suppressed until the land", eid);
@@ -267,6 +269,12 @@ void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newCl
             "(churn, not the land)", eid);
 }
 
+void* LiveActorOf(coop::element::ElementId E) {
+    coop::element::Element* e = coop::element::Registry::Get().Get(E);
+    void* a = e ? e->GetActor() : nullptr;
+    return (a && R::IsLiveByIndex(a, e->GetInternalIdx())) ? a : nullptr;
+}
+
 bool IsCarrying(coop::element::ElementId E) {
     return g_carry.find(static_cast<uint32_t>(E)) != g_carry.end();
 }
@@ -327,8 +335,7 @@ bool OpenBornCarry(coop::net::Session& s, void* clump, const char* why) {
     if (!TakeClumpBorn(clump, &E, &chipType)) return false;   // a hand edge took it first, or it died
     if (IsCarrying(E)) {
         // The pile was taken inside its own land settle: fold the re-pile as the churn a re-grab
-        // is, and this clump carries the lane on. The land a thrower's hold waited for did happen --
-        // the pile the broom took is that land -- so the hold ends here as the commit would have.
+        // is, and this clump carries the lane on.
         OnHostRegrab(s, E, clump);
         return true;
     }
@@ -428,7 +435,7 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
                                : "an uncarried re-pile, placed",
                     reread ? "re-read from the settled pile" : "FALLBACK (pile not live -- clump transform)");
             g_carry.erase(it->first);                     // CLOSE the carry latch
-            ClearHeldBy(it->first);                       // the land ends a client-grab hold
+            ClearHeldBy(it->first);                       // defensive: a hold ends at its let-go, before any land
             it = g_settle.erase(it);
         } else {
             ++it;
@@ -482,7 +489,6 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
                 if (++lane.restTicks >= kRestCloseTicks) {
                     UE_LOGI("[TRASH-CH] HOST carry eid=%u clump AT REST un-held, no re-pile -- lane "
                             "CLOSED; the clump stays world-tracked + re-grabbable (the SP end state)", eid);
-                    ClearHeldBy(eid);
                     it = g_carry.erase(it);
                     continue;
                 }

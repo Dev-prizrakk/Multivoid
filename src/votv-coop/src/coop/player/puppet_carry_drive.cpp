@@ -45,10 +45,6 @@ Quat Mul(const Quat& a, const Quat& b) {
                  a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
 }
 
-ue_wrap::FRotator AimRotator(const ue_wrap::FVector& fwd) {
-    return ue_wrap::FRotator{ std::atan2(fwd.Z, std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y)) * 57.29578f,
-                              std::atan2(fwd.Y, fwd.X) * 57.29578f, 0.f };
-}
 
 struct PuppetHeld {
     uint32_t eid   = 0;        // the trash entity
@@ -76,7 +72,7 @@ struct PuppetHeld {
 Quat GrabOrientationInView(uint8_t slot, void* clump) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     if (!rp || !rp->valid()) return Quat{};
-    Quat view = FromRotator(AimRotator(rp->GetSyncedAimDirection()));
+    Quat view = FromRotator(rp->GetSyncedAimRotation());
     view.x = -view.x; view.y = -view.y; view.z = -view.z;   // the inverse of a unit quaternion
     return Mul(view, FromRotator(E::GetActorRotation(clump)));
 }
@@ -140,7 +136,15 @@ void Tick(coop::net::Session& s) {
         // settle can COMMIT the ToPile. Only a clump gone with NO pending settle is a genuine loss: release
         // the hold there so the eid is re-grabbable, or g_heldBy strands it un-grabbable.
         if (!R::IsLiveByIndex(it->clump, it->clumpIdx)) {
-            if (coop::trash_channel::HasPendingSettle(E)) {
+            // This row's clump is gone; the ENTITY may not be. A broom or a hand that took the pile
+            // a throw landed as, in the very tick its land committed, re-opens E's carry on a new
+            // clump (the latch reads open again, so guard 1 passes): a release here would retire a
+            // live entity everywhere. The row is simply stale.
+            void* now = coop::trash_channel::LiveActorOf(E);
+            if (now && now != it->clump) {
+                UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- this clump is gone and the entity lives on in %p "
+                        "-> drive OFF, nothing released", it->eid, it->slot, now);
+            } else if (coop::trash_channel::HasPendingSettle(E)) {
                 UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- clump consumed by a re-pile (settle pending) -> drive OFF (land commits)",
                         it->eid, it->slot);
             } else {
@@ -160,6 +164,8 @@ void Tick(coop::net::Session& s) {
             coop::trash_channel::OnHolderGone(s, E);
             it->flying = true;
         }
+        const bool publish = s.TrashCarryPoseTurn(it->eid, /*ahead=*/true) != coop::net::PoseTurn::Wait;
+        if (it->flying && !publish) { ++it; continue; }   // a free body between its turns: nothing to read
         const ue_wrap::FVector loc = E::GetActorLocation(it->clump);
         if (!it->flying) {
             // The hold point: the puppet's camera + synced aim * grabLen, where the remote player
@@ -178,7 +184,7 @@ void Tick(coop::net::Session& s) {
             const ue_wrap::FVector hold{ eye.X + fwd.X * kGrabLenCm,
                                          eye.Y + fwd.Y * kGrabLenCm,
                                          eye.Z + fwd.Z * kGrabLenCm };
-            const Quat q = Mul(FromRotator(AimRotator(fwd)), it->inView);
+            const Quat q = Mul(FromRotator(rp->GetSyncedAimRotation()), it->inView);
             E::SetPhysicsHandleTarget(E::ReadMainPlayerGrabHandle(puppet), hold,
                                       E::QuatToRotator(q.x, q.y, q.z, q.w));
             const float lx = loc.X - hold.X, ly = loc.Y - hold.Y, lz = loc.Z - hold.Z;
@@ -190,7 +196,7 @@ void Tick(coop::net::Session& s) {
         // can't echo to the grabber; a client drives only slot 0). eid+ctx keyed -> the receiver's per-eid
         // ActiveDrive interp; ctx is the carry generation (stale-pose guard on the client). A clump a
         // player moved, carried or thrown, goes ahead of the ones a broom set rolling.
-        if (s.TrashCarryPoseTurn(it->eid, /*ahead=*/true) != coop::net::PoseTurn::Wait) {
+        if (publish) {
             const ue_wrap::FRotator rot = E::GetActorRotation(it->clump);
             coop::net::TrashClumpPoseSnapshot snap{};
             snap.eid   = it->eid;

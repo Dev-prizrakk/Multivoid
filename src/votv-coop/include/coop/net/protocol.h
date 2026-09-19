@@ -2195,12 +2195,13 @@ struct GrabIntentPayload {
 static_assert(sizeof(GrabIntentPayload) == 8, "GrabIntentPayload must be 8 bytes");
 static_assert(sizeof(GrabIntentPayload) <= 256 - 20 - 8, "GrabIntentPayload must fit one datagram");
 
-// Why the host refused a grab intent (GrabRefused). The client's handling is the same for every
-// reason -- the request is over -- and the reason is there for the log a player sends us.
+// Why the host refused a grab intent (GrabRefused). For reasons 1 to 8 the client's handling is
+// one -- the request is over -- and the reason is there for the log a player sends us. Reason 9
+// answers no request: the host ended a carry the client already had.
 enum class GrabRefusedReason : uint8_t {
     AlreadyHeld  = 1,   // the pile's carry latch is open: somebody holds it
     SlotBusy     = 2,   // the sender already holds another clump
-    PuppetGone   = 3,   // the sender's puppet is not live on the host
+    PuppetGone   = 3,   // the sender's puppet is not live on the host, or has fallen: no hand to hold with
     OutOfReach   = 4,   // the pile is real and the sender is not near it
     Unresolvable = 5,   // the eid names nothing on the host
     NotAPile     = 6,   // the eid names a live actor that is not a chip pile

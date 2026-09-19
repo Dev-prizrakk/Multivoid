@@ -155,8 +155,12 @@ void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId) {
     if (reason == static_cast<uint8_t>(coop::net::GrabRefusedReason::HoldEnded)) {
         // Not an answer to a request: the host ended our carry (its hand or a broom took the
         // clump, or we fell and our puppet let it go).
+        // A grab of ours still unanswered goes with it: this notice rides a faster lane than the
+        // ToClump that would confirm it, and that late confirmation must not start a carry the host
+        // has already ended.
         const bool carried = (eid != 0u && eid == g_clientCarry);
         if (carried) g_clientCarry = 0;
+        if (eid != 0u && eid == g_clientPendingGrab) g_clientPendingGrab = 0;
         UE_LOGI("[GRAB-INTENT] CLIENT carry ENDED BY THE HOST eid=%u -- %s", eid,
                 carried ? "carry ended, the next press grabs" : "not what we carry -- ignored");
         return;
@@ -212,8 +216,10 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
     // Resolve the puppet and the pile actor.
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
-    if (!puppet) {
-        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live", eid, senderSlot);
+    if (!puppet || rp->IsRagdollDisplayed()) {
+        // No hand to hold with: no puppet, or a fallen one (the carry drive would let go a tick
+        // later, and the pile would have been turned into a dropped clump for nothing).
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live, or fallen", eid, senderSlot);
         Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::PuppetGone);
         return;
     }
@@ -394,7 +400,7 @@ void OnHolderGone(coop::net::Session& s, coop::element::ElementId E) {
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     coop::element::Element* ce = coop::element::Registry::Get().Get(E);
     void* ca = ce ? ce->GetActor() : nullptr;
-    if (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx())) {
+    if (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx()) && ue_wrap::prop::IsGarbageClump(ca)) {
         UE_LOGI("[GRAB-INTENT] eid=%u slot=%u -- the holder cannot hold (left, fell, no puppet): the clump "
                 "is let go where it is (it falls and lands like a release)", eid, held->second);
         LetGo(eid, puppet, ca);
@@ -419,7 +425,8 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     coop::element::Element* ce = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
     void* ca    = ce ? ce->GetActor() : nullptr;
-    void* clump = (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx())) ? ca : nullptr;
+    void* clump = (ca && R::IsLiveByIndex(ca, ce->GetInternalIdx()) && ue_wrap::prop::IsGarbageClump(ca))
+                      ? ca : nullptr;
     if (!clump) {
         UE_LOGW("[THROW-INTENT] eid=%u slot=%u -- clump not live -- releasing hold", eid, senderSlot);
         ReleaseClientHold(s, static_cast<coop::element::ElementId>(eid));

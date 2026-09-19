@@ -201,7 +201,8 @@ bool HandleIntentEvent(net::Session& session,
     }
     case net::ReliableKind::GrabRefused: {
         // HOST->CLIENT, one recipient, never relayed: the answer to a GrabIntent the host did not
-        // perform. coop::trash_channel::OnGrabRefused.
+        // perform, or (reason HoldEnded) the notice that the host ended the recipient's carry.
+        // coop::trash_channel::OnGrabRefused.
         if (session.role() == net::Role::Host) {
             UE_LOGW("event_feed: GrabRefused received on the HOST -- dropping");
             break;

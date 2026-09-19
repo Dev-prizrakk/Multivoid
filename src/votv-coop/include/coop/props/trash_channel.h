@@ -42,8 +42,8 @@ coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::El
 // certificate and open E's carry as a grab does -- the one to-clump broadcast, tagged `why`, the
 // churn latch, the land settle and the termination pass -- so the roll ends on the same land as a
 // throw. A pile taken inside its own land settle folds as churn instead, this clump carrying the
-// lane on, and a thrower's hold on it ends there. False when there is no certificate: a hand edge
-// consumed it first, or the clump died. Game thread.
+// lane on. False when there is no certificate: a hand edge consumed it first, or the clump died.
+// Game thread.
 bool OpenBornCarry(coop::net::Session& s, void* clump, const char* why);
 
 // Host: a broom stroke pushed `clump`, a tracked clump whose carry had closed at rest, un-held and
@@ -83,8 +83,10 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
 // grab confirms the carry; a to-pile for the carried eid clears it. A no-op on the host.
 void NoteClientConvertObserved(uint32_t eid, bool toClump);
 
-// Client: the host refused our GrabIntent for `eid` (GrabRefused). Ends the pending request, so a
-// later ToClump for that eid, somebody else's grab, is not taken for our confirmation.
+// Client: a GrabRefused for `eid`. A refusal of our GrabIntent ends the pending request, so a
+// later ToClump for that eid, somebody else's grab, is not taken for our confirmation. Reason
+// HoldEnded answers no request: the host ended the carry we had (its hand or a broom took the
+// clump, or we fell), and the carry toggle clears.
 void OnGrabRefused(uint32_t eid, uint8_t reason, uint16_t reqId);
 
 // Client: the trash eid this player carries, or the invalid id. The use-press toggle reads it.
@@ -120,6 +122,10 @@ void ClearClientCarry(uint32_t eid);
 // hold on E (that holder alone is told) and its puppet's drive. No broadcast, no context bump. A
 // no-op if E is not carrying.
 void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newClump);
+
+// Host: the live actor E names right now (a pile or a clump), or null. For a caller holding a
+// cached actor of E's that died, to tell a dead ENTITY from an entity that moved on to a successor.
+void* LiveActorOf(coop::element::ElementId E);
 
 // Host: is E mid-carry? The local streams gate the held-edge rebind on it.
 bool IsCarrying(coop::element::ElementId E);

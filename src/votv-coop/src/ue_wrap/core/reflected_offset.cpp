@@ -20,9 +20,13 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
+// Resolve's answer for a class that IS loaded and has no such field: final, where -1 (the class is
+// not loaded yet) is retried.
+constexpr int32_t kFieldMissing = -2;
+
 // Internal: resolve, and log once.
 //   Returns the FProperty.Offset_Internal of `fieldName` on the UClass named `className`, or
-//   -1 if either lookup fails. Logs once per (class, field) pair whatever the outcome: a
+//   -1 if the class is not loaded yet, kFieldMissing if it is and has no such field. Logs once per (class, field) pair whatever the outcome: a
 //   one-time resolved line on success, a one-time warning on failure. The logged-pair sets
 //   are process-static, so they cover every accessor call.
 int32_t Resolve(const wchar_t* className, const wchar_t* fieldName) {
@@ -57,12 +61,15 @@ int32_t Resolve(const wchar_t* className, const wchar_t* fieldName) {
                     key.c_str());
         }
     }
-    return off;
+    // A class that is loaded and has no such field never will: kFieldMissing lets the accessor
+    // latch that, where a class not loaded yet (-1) is retried.
+    return (cls && off < 0) ? kFieldMissing : off;
 }
 
-// Accessor body: a static cache that memoises only on success. A first call before the BP
-// class loads returns -1; the next call retries. Once resolved, every later call is a single
-// atomic load.
+// Accessor body: a static cache that memoises a success, and a field missing from a LOADED class
+// (a per-tick caller must not redo the class and property walk for a field that was renamed). A
+// first call before the BP class loads returns -1; the next call retries. Once settled, every
+// later call is a single atomic load.
 //
 // Thread-safety: the race on the atomic is benign -- two threads resolving the same pair both
 // call Resolve() and both store the same value. Resolve's own mutex prevents double logging.
@@ -73,9 +80,10 @@ struct OffsetCache {
 int32_t GetOrResolve(OffsetCache& cache, const wchar_t* className, const wchar_t* fieldName) {
     int32_t cached = cache.value.load(std::memory_order_acquire);
     if (cached >= 0) return cached;
+    if (cached == kFieldMissing) return -1;
     const int32_t resolved = Resolve(className, fieldName);
-    if (resolved >= 0) cache.value.store(resolved, std::memory_order_release);
-    return resolved;
+    if (resolved >= 0 || resolved == kFieldMissing) cache.value.store(resolved, std::memory_order_release);
+    return resolved >= 0 ? resolved : -1;
 }
 
 #define VC_DEFINE_OFFSET(fn, klass, field) \

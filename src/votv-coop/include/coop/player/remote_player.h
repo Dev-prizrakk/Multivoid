@@ -74,6 +74,8 @@ public:
     // Positions a puppet-held item at the hand, since the puppet's own tick does not drive it. Game
     // thread.
     ue_wrap::FVector GetSyncedAimDirection() const;
+    // The same aim as a rotator (pitch, yaw, no roll), for a caller that wants the angles.
+    ue_wrap::FRotator GetSyncedAimRotation() const { return {curPitch_, curYaw_ + curHeadYawDelta_, 0.f}; }
 
     // The raw engine puppet actor, nullptr before Spawn. Game thread only.
     void* GetActor() const { return actor_; }

@@ -38,7 +38,7 @@ void NoteLetGo(coop::element::ElementId eid);
 
 // HOST: per-gameplay-tick pump (called from subsystems::TickGameplay AFTER trash_channel::TickCarry, so
 // the carry latch is current before the drive guards on IsCarrying). For each registered held clump:
-// guard (latch open, clump live, puppet live); if NOT flying, the puppet's physics handle is given its target (head + aim*grabLen);
+// guard (latch open, clump live, puppet able to hold); if NOT flying, the puppet's physics handle is given its target (camera + aim*grabLen);
 // then PUBLISH its pose on `s`'s host-originated TrashCarryPose queue (carry + flight). Drops the
 // entry when the clump dies or the carry latch closes (the land, the rest); a puppet that is gone
 // lets its clump go (trash_channel::OnHolderGone) and the entry streams on as a flight. Game thread.

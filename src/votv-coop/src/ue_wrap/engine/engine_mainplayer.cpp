@@ -248,15 +248,19 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
         reinterpret_cast<uint8_t*>(localPlayer) + offHandle);
     if (phc && R::IsLive(phc)) {
         R::CallFunction(phc, g_phcReleaseFnCache, nullptr);
-        UE_LOGI("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent dispatched on doomed actor=%p",
+        UE_LOGI("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent dispatched, actor=%p let go",
                 actor);
     } else {
         UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC pointer null/dead on localPlayer=%p -- only clearing grabbing_actor",
                 localPlayer);
     }
     // Mirror the grab-destroyed delegate's cleanup, so state reads later in the same frame do
-    // not see the dangling pointer.
+    // not see the dangling pointer. The component goes with the actor: a caller whose actor lives
+    // on (a clump let go) must not leave the pawn naming a body it no longer holds.
     *grabbingSlot = nullptr;
+    const int32_t offComp = ue_wrap::reflected_offset::MainPlayer_grabbing_component();
+    if (offComp >= 0)
+        *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(localPlayer) + offComp) = nullptr;
     return true;
 }
 
