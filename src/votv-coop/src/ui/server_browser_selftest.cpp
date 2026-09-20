@@ -178,6 +178,9 @@ bool g_lockWasLockedBefore = false;
 uint64_t g_windowWaitStartMs = 0;
 uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
+// The session phase has seen the version warning in THIS run. A gate, unlike the other per-run
+// values here, which their own phase overwrites before reading: so Arm resets it.
+bool     g_sessWarned        = false;
 float    g_endAtRest         = -1.f;   // GetScrollOffsetOfEnd -- the max offset that exists
 float    g_offAtRest         = -1.f;
 float    g_offAfterBig       = -1.f;
@@ -1069,9 +1072,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             const bool gone = !ui::host_window_native::IsOpen();
             // The selected save is of another game version: the first Next must stop at the warning
             // and open nothing, and the second must go through. Seen once, then Next is pressed again.
-            static bool sWarned = false;
-            if (!up && !sWarned && ui::host_window_native::VersionWarningUp()) {
-                sWarned = true;
+            if (!up && !g_sessWarned && ui::host_window_native::VersionWarningUp()) {
+                g_sessWarned = true;
                 UE_LOGW("host_window_native: VERSION WARNING PASS -- a real click on Next with a save "
                         "of another game version selected opened nothing and raised the warning; "
                         "pressing Next again");
@@ -1207,6 +1209,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
     ++g_selfCheckStep;
 }
 
-void Arm() { g_selfCheckStep = 0; }
+void Arm() {
+    g_selfCheckStep = 0;
+    g_sessWarned = false;
+}
 
 }  // namespace ui::server_browser_selftest
