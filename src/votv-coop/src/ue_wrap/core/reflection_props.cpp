@@ -49,6 +49,12 @@ int32_t FunctionFrameSize(void* function) {
                                        O::UStruct_PropertiesSize);
 }
 
+int32_t StructSize(void* structOrClass) {
+    if (!structOrClass) return 0;
+    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(structOrClass) +
+                                       O::UStruct_PropertiesSize);
+}
+
 std::vector<StructFieldInfo> EnumerateStructFields(void* structOrClass) {
     std::vector<StructFieldInfo> fields;
     if (!structOrClass) return fields;

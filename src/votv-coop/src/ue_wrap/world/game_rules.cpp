@@ -6,6 +6,7 @@
 #include "ue_wrap/core/sdk_profile_names.h"
 
 #include <cstdint>
+#include <cstring>
 #include <cwctype>
 
 namespace ue_wrap::game_rules {
@@ -27,6 +28,20 @@ const char* GameModeName(int ord) {
         case 7: return "Solar";
         default: return nullptr;  // 2/3/unknown -> caller renders "#N"
     }
+}
+
+// The member name with its blueprint tail cut: "fallDamage_8_AEEA..." -> "fallDamage". The cut is
+// at the first "_<digit>", which is where the tail always starts; a human sub-word such as
+// "enableMG_math" keeps its "_". Unique within the struct, so it is the key a rule is known by.
+std::string TrimmedKey(const std::wstring& name) {
+    size_t cut = name.size();
+    for (size_t i = 0; i + 1 < name.size(); ++i) {
+        if (name[i] == L'_' && std::iswdigit(name[i + 1])) { cut = i; break; }
+    }
+    std::string out;
+    out.reserve(cut);
+    for (size_t i = 0; i < cut; ++i) out.push_back(static_cast<char>(name[i]));
+    return out;
 }
 
 // Trim a GUID-mangled BP member name to its stable human prefix + light prettify:
@@ -60,42 +75,22 @@ std::string PrettyLabel(const std::wstring& name) {
     return out;
 }
 
-}  // namespace
+// The rules struct at `owner.<prop>`, member by member. The struct is all bool + TEnumAsByte(1) +
+// float(4) (no int32/FName), so: FindBoolProperty -> Bool; else size==4 -> Float; else 1-byte ->
+// Enum. A future recook that adds an int32 member would render as Float, caught at the next
+// struct re-RE.
+bool ReadRulesAt(void* owner, const wchar_t* prop, std::vector<RuleField>& out) {
+    out.clear();
+    void* cls = owner ? R::ClassOf(owner) : nullptr;
+    if (!cls) return false;
+    const int32_t off = R::FindPropertyOffset(cls, prop);
+    void* structObj = R::PropertyInnerStruct(cls, prop);
+    if (off < 0 || !structObj) return false;
+    uint8_t* base = reinterpret_cast<uint8_t*>(owner) + off;
 
-bool ReadLocal(Snapshot& out) {
-    out.valid = false;
-    out.gamemode = -1;
-    out.gamemodeName.clear();
-    out.fields.clear();
-
-    // Re-resolve the GameInstance FRESH every snapshot (game thread): never cache
-    // a pointer a mid-flight teardown / rehost could free. Null until it boots.
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
-    if (!gi) return false;
-    void* giClass = R::ClassOf(gi);
-    if (!giClass) return false;
-
-    const int32_t grOff = R::FindPropertyOffset(giClass, L"gameRules");
-    void* structObj = R::PropertyInnerStruct(giClass, L"gameRules");
-    if (grOff < 0 || !structObj) return false;
-    uint8_t* base = reinterpret_cast<uint8_t*>(gi) + grOff;
-
-    // gamemode (a GI member, NOT inside gameRules).
-    const int32_t gmOff = R::FindPropertyOffset(giClass, L"GameMode");
-    if (gmOff >= 0) {
-        out.gamemode = *(reinterpret_cast<uint8_t*>(gi) + gmOff);
-        const char* nm = GameModeName(out.gamemode);
-        if (nm) out.gamemodeName = nm;
-        else    out.gamemodeName = "#" + std::to_string(out.gamemode);
-    }
-
-    // Enumerate the gameRules members by reflection and read each by type. The
-    // struct is all bool + TEnumAsByte(1) + float(4) (no int32/FName), so:
-    // FindBoolProperty -> Bool; else size==4 -> Float; else 1-byte -> Enum. A
-    // future recook that adds an int32 member would render as Float (harmless
-    // debug degradation, caught at the next struct re-RE).
     for (const R::StructFieldInfo& fi : R::EnumerateStructFields(structObj)) {
         RuleField rf;
+        rf.key = TrimmedKey(fi.name);
         rf.label = PrettyLabel(fi.name);
 
         int32_t bOff = -1;
@@ -110,11 +105,78 @@ bool ReadLocal(Snapshot& out) {
             rf.kind = Kind::Enum;
             rf.ival = base[fi.offset];
         }
-        out.fields.push_back(std::move(rf));
+        out.push_back(std::move(rf));
+    }
+    return !out.empty();
+}
+
+}  // namespace
+
+bool ReadLocal(Snapshot& out) {
+    out.valid = false;
+    out.savedValid = false;
+    out.gamemode = -1;
+    out.gamemodeName.clear();
+    out.fields.clear();
+    out.saved.clear();
+
+    // Re-resolve the GameInstance FRESH every snapshot (game thread): never cache
+    // a pointer a mid-flight teardown / rehost could free. Null until it boots.
+    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    if (!gi) return false;
+    void* giClass = R::ClassOf(gi);
+    if (!giClass) return false;
+
+    // gamemode (a GI member, NOT inside gameRules).
+    const int32_t gmOff = R::FindPropertyOffset(giClass, L"GameMode");
+    if (gmOff >= 0) {
+        out.gamemode = *(reinterpret_cast<uint8_t*>(gi) + gmOff);
+        const char* nm = GameModeName(out.gamemode);
+        if (nm) out.gamemodeName = nm;
+        else    out.gamemodeName = "#" + std::to_string(out.gamemode);
     }
 
-    out.valid = !out.fields.empty();
+    out.valid = ReadRulesAt(gi, L"gameRules", out.fields);
+
+    // The saved copy, off the save object the GameInstance holds for this world.
+    const int32_t saveOff = R::FindPropertyOffset(giClass, L"save_gameInst");
+    if (saveOff >= 0) {
+        void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + saveOff);
+        if (save && R::IsLive(save)) out.savedValid = ReadRulesAt(save, L"localGameRules", out.saved);
+    }
     return out.valid;
+}
+
+int ApplySavedToProcess(void* gameInstance, void* save) {
+    if (!gameInstance || !save || !R::IsLive(save)) return -1;
+    void* giClass = R::ClassOf(gameInstance);
+    void* saveClass = R::ClassOf(save);
+    if (!giClass || !saveClass) return -1;
+    const int32_t dstOff = R::FindPropertyOffset(giClass, L"gameRules");
+    const int32_t srcOff = R::FindPropertyOffset(saveClass, L"localGameRules");
+    void* dstStruct = R::PropertyInnerStruct(giClass, L"gameRules");
+    void* srcStruct = R::PropertyInnerStruct(saveClass, L"localGameRules");
+    const int32_t size = R::StructSize(dstStruct);
+    // One struct type on both sides, or the bytes do not mean the same thing.
+    if (dstOff < 0 || srcOff < 0 || !dstStruct || dstStruct != srcStruct || size <= 0) return -1;
+
+    uint8_t* dst = reinterpret_cast<uint8_t*>(gameInstance) + dstOff;
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(save) + srcOff;
+    // The boot loop re-asserts this on every poll: equal bytes are the common case and cost nothing.
+    if (std::memcmp(dst, src, static_cast<size_t>(size)) == 0) return 0;
+
+    std::vector<RuleField> before, saved;
+    ReadRulesAt(gameInstance, L"gameRules", before);
+    ReadRulesAt(save, L"localGameRules", saved);
+    int changed = 0;
+    for (size_t i = 0; i < before.size() && i < saved.size(); ++i) {
+        const RuleField& a = before[i];
+        const RuleField& b = saved[i];
+        if (a.bval != b.bval || a.ival != b.ival || a.fval != b.fval) ++changed;
+    }
+    // The members are bools, bytes and one float: a plain value copy is the whole assignment.
+    std::memcpy(dst, src, static_cast<size_t>(size));
+    return changed;
 }
 
 }  // namespace ue_wrap::game_rules

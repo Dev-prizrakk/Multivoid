@@ -12,6 +12,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/world_identity.h"
+#include "ue_wrap/world/game_rules.h"
 
 #include <cstdint>
 #include <cstring>
@@ -234,6 +235,23 @@ BootWorldView SurveyBootWorld(const char* who) {
     return v;
 }
 
+// The save's world rules put in force on the GameInstance, which is where the game reads nearly
+// all of them. The game's slot menu does this on its way into a world and both boots below skip
+// that menu. Re-asserted on every poll like the save registration, since the process outlives a
+// campaign and the game's own menu may have loaded another slot in between; it logs when a save is
+// first seen and whenever the copy changed something.
+void PutSaveRulesInForce(void* gi, void* save, const char* who) {
+    static void* sLastSave = nullptr;
+    const int changed = ue_wrap::game_rules::ApplySavedToProcess(gi, save);
+    if (changed < 0) {
+        UE_LOGW("engine: %s -- the save's world rules could not be put in force (struct unresolved)", who);
+    } else if (changed > 0 || save != sLastSave) {
+        UE_LOGI("engine: %s -- the save's world rules are in force (%d rule(s) changed on the GameInstance)",
+                who, changed);
+    }
+    sLastSave = save;
+}
+
 }  // namespace
 
 bool GetSavePrefix(uint8_t mode, std::wstring& out) {
@@ -330,6 +348,7 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
     } else {
         UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
     }
+    PutSaveRulesInForce(gi, g_storySave, "LoadStorySave");
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
 
     // The game mode from the slot prefix before the travel, retried each poll until the widget is
@@ -432,6 +451,7 @@ bool StartFreshGame(bool storyMode) {
     } else {
         UE_LOGW("engine: StartFreshGame -- setSaveSlotObject unresolved");
     }
+    PutSaveRulesInForce(gi, g_storySave, "StartFreshGame");
     // A blank save has empty object and trigger arrays, so restoring it yields the level defaults
     // through the same load path as a real save.
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;

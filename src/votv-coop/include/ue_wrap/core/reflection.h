@@ -288,6 +288,10 @@ int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 // if the property is not found or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
 
+// The size in bytes of one instance of `structOrClass` (UStruct::PropertiesSize): what a whole-value
+// copy of a struct property moves. 0 for null.
+int32_t StructSize(void* structOrClass);
+
 // One instance member of a UStruct or UClass, in declaration order.
 struct StructFieldInfo {
     std::wstring name;   // the FField name (BP members carry a "_NN_GUID" tail)
