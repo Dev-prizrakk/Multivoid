@@ -351,7 +351,9 @@ void PocketTheWants(void* player) {
 // puts the live world in a NEW <slot>_SUB_<n> file, then the pause menu's plain save, which writes
 // the main slot -- two files from one world, which is what a profile set that follows the written
 // slot has to be seen doing. tools/mp.py puts the loaded slot and its profile files back after the
-// run and reports the subsaves a run made.
+// run and reports the subsaves a run made. The arrival is read off the session as a whole, which is
+// enough for the two peers this drill is written for: a SECOND client arriving while the first is
+// still there is no edge, and a three-peer drill would need the edge per slot.
 constexpr int kSaveGapTicks = 300;  // ~5 s at the pump's ~60 Hz: after the arrival, and between the two
 constexpr int kSaveRuns     = 6;
 

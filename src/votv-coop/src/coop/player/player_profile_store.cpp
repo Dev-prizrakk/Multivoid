@@ -98,10 +98,17 @@ bool IsProfileFile(const fs::path& file) {
 // short is not the set, and a caller that removes what is "not in the set" must not act on one.
 bool ProfileFilesIn(const fs::path& dir, std::vector<fs::path>& out) {
     out.clear();
+    bool everyEntryAnswered = true;
     std::error_code ec;
-    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
-        if (it->is_regular_file(ec) && IsProfileFile(it->path())) out.push_back(it->path());
-    return !ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        // Its own error code: the step to the next entry writes `ec` again, and a failure left in
+        // it would be gone by the time the loop is over.
+        std::error_code entryEc;
+        const bool regular = it->is_regular_file(entryEc);
+        if (entryEc) { everyEntryAnswered = false; continue; }
+        if (regular && IsProfileFile(it->path())) out.push_back(it->path());
+    }
+    return everyEntryAnswered && !ec;
 }
 
 std::string Hex(const std::vector<uint8_t>& b) {

@@ -9,7 +9,10 @@
 //
 //   hosting            the host's session is up, in a loaded world
 //   world-ready        this client announced ClientWorldReady: its world is up, its registry is
-//                      coherent and the load's tail has settled
+//                      coherent and the load's tail has settled. The host's replay has NOT arrived
+//                      yet
+//   joined             this client's join is over: the host's snapshot is applied and the join
+//                      cover is down. The line to wait on before driving a client
 //   peer-world-ready   the host took a client's ClientWorldReady and is replaying to slot <n>
 //
 // A milestone is said every time it is reached: a client says `world-ready` again after a world
