@@ -20,7 +20,8 @@
 //     subsave writes the main slot. So a cut to another slot than the one the set stands under
 //     first makes that slot's directory a copy of the set -- every player's file, held or not,
 //     and nothing of the world that file held before -- and the set stands there from then on.
-//     Loading either file later finds the profiles that belong to it;
+//     Loading either file later finds the profiles that belong to it. Nothing is removed there
+//     until every copy has landed, and with no slot known for the world nothing is removed at all;
 //   * nothing is written on a disconnect, on shutdown or on a timer. A host that quits without
 //     saving reverts its world to the last save, and the profiles revert with it.
 // MTA saves an account when it changed and 15 s have passed, and at quit (CAccountManager.cpp:

@@ -94,12 +94,14 @@ bool IsProfileFile(const fs::path& file) {
     return coop::player_handshake::IsValidGuid(guid);
 }
 
-std::vector<fs::path> ProfileFilesIn(const fs::path& dir) {
-    std::vector<fs::path> out;
+// The set's files in `dir`. False when the directory could not be read to its end: a listing cut
+// short is not the set, and a caller that removes what is "not in the set" must not act on one.
+bool ProfileFilesIn(const fs::path& dir, std::vector<fs::path>& out) {
+    out.clear();
     std::error_code ec;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
         if (it->is_regular_file(ec) && IsProfileFile(it->path())) out.push_back(it->path());
-    return out;
+    return !ec;
 }
 
 std::string Hex(const std::vector<uint8_t>& b) {
@@ -231,6 +233,12 @@ bool WriteFile(const std::string& guid, const std::vector<uint8_t>& blob, const 
 // before, and a player of that world would come back carrying items this one still has on the
 // floor. The set is copied byte for byte -- a file that does not read stays as it is there too --
 // and stands under `written` from then on. False leaves everything as it was for the next save.
+//
+// Nothing is removed before every copy has landed, and nothing at all on an answer that is not an
+// answer: a directory that cannot be asked about is not an absent one, and a listing cut short is
+// not the set. With no slot known for this world (a process never told which file it came from)
+// the lineage is unknown too, so the directory beside the written file is taken as it stands; a
+// save the host picker creates is cleared where it is created (ForgetSlot).
 bool FollowWrittenSlot(const std::wstring& written) {
     if (written == g_setSlot) return true;
     const fs::path to = SlotDir(written);
@@ -242,31 +250,55 @@ bool FollowWrittenSlot(const std::wstring& written) {
                 to.empty() ? "not a name for one directory, or no game directory" : ec.message().c_str());
         return false;
     }
+    if (g_setSlot.empty()) {
+        UE_LOGI("player_profile: the world was saved to '%ls' and no slot was known for it -- its "
+                "profiles stand there from now on, the directory taken as it is", written.c_str());
+        g_setSlot = written;
+        return true;
+    }
     const fs::path from = SlotDir(g_setSlot);
-    const bool haveFrom = !from.empty() && fs::is_directory(from, ec);
+    const fs::file_type fromIs = from.empty() ? fs::file_type::not_found : fs::status(from, ec).type();
+    if (fromIs != fs::file_type::directory && fromIs != fs::file_type::not_found) {
+        UE_LOGE("player_profile: '%ls' could not be asked about (%s) -- nothing cut, everything "
+                "stays for the next save", from.c_str(), ec.message().c_str());
+        return false;
+    }
+    const bool haveFrom = fromIs == fs::file_type::directory;
     if (haveFrom && fs::equivalent(from, to, ec)) {  // one directory under two spellings
         g_setSlot = written;
         return true;
     }
-    size_t removed = 0, copied = 0;
-    for (const fs::path& stale : ProfileFilesIn(to)) {
-        if (haveFrom && fs::exists(from / stale.filename(), ec)) continue;  // copied over below
-        if (fs::remove(stale, ec)) ++removed;
+    std::vector<fs::path> set, there;
+    if ((haveFrom && !ProfileFilesIn(from, set)) || !ProfileFilesIn(to, there)) {
+        UE_LOGE("player_profile: the profiles under '%ls' or '%ls' could not be listed -- nothing "
+                "cut, everything stays for the next save", g_setSlot.c_str(), written.c_str());
+        return false;
     }
-    if (haveFrom)
-        for (const fs::path& file : ProfileFilesIn(from)) {
-            fs::copy_file(file, to / file.filename(), fs::copy_options::overwrite_existing, ec);
-            if (ec) {
-                UE_LOGE("player_profile: copying '%ls' beside the slot '%ls' failed (%s) -- nothing "
-                        "cut, everything stays for the next save", file.c_str(), written.c_str(),
-                        ec.message().c_str());
-                return false;
-            }
-            ++copied;
+    // Names compared the way the file system compares them: one file under two spellings of its
+    // hex would otherwise be copied and then removed as a stranger.
+    auto folded = [](const fs::path& file) {
+        std::wstring name = file.filename().wstring();
+        for (wchar_t& c : name)
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        return name;
+    };
+    std::unordered_set<std::wstring> names;
+    for (const fs::path& file : set) {
+        fs::copy_file(file, to / file.filename(), fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            UE_LOGE("player_profile: copying '%ls' beside the slot '%ls' failed (%s) -- nothing "
+                    "removed there, nothing cut, everything stays for the next save", file.c_str(),
+                    written.c_str(), ec.message().c_str());
+            return false;
         }
+        names.insert(folded(file));
+    }
+    size_t removed = 0;
+    for (const fs::path& stale : there)
+        if (!names.count(folded(stale)) && fs::remove(stale, ec)) ++removed;
     UE_LOGI("player_profile: the world was saved to '%ls', its profiles stood under '%ls' -- %zu "
             "file(s) of the set copied beside the new file, %zu left by the world that slot held "
-            "before removed", written.c_str(), g_setSlot.c_str(), copied, removed);
+            "before removed", written.c_str(), g_setSlot.c_str(), set.size(), removed);
     g_setSlot = written;
     return true;
 }
@@ -324,9 +356,12 @@ size_t ForgetSlot(const std::wstring& slot) {
     const fs::path dir = SlotDir(slot);
     size_t removed = 0;
     std::error_code ec;
-    if (!dir.empty() && fs::is_directory(dir, ec))
-        for (const fs::path& file : ProfileFilesIn(dir))
-            if (fs::remove(file, ec)) ++removed;
+    // A listing cut short still names files that are there, and every one of them is a stranger
+    // to a save that was just created: what it did list goes.
+    std::vector<fs::path> files;
+    if (!dir.empty() && fs::is_directory(dir, ec)) ProfileFilesIn(dir, files);
+    for (const fs::path& file : files)
+        if (fs::remove(file, ec)) ++removed;
     if (removed)
         UE_LOGI("player_profile: the save '%ls' is new -- %zu profile file(s) a deleted save of that "
                 "name had left beside it removed", slot.c_str(), removed);
