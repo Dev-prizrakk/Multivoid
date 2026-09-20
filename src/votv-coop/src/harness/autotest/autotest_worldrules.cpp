@@ -9,6 +9,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/world/game_rules.h"
+#include "ue_wrap/world/game_rules_pane.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -134,6 +135,35 @@ void RunWorldRulesProbe() {
             UE_LOGI("worldrules:   %-24s process=%-5s saved=%-5s%s", f.key.c_str(), process.c_str(),
                     saved.c_str(), differs ? " MISMATCH" : "");
         }
+    });
+
+    // The game's own pane layout, joined to the rules the way the panel joins it: a rule the pane
+    // does not place, or a row that finds no rule, shows here before it shows on screen.
+    OnGameThread([] {
+        namespace GP = ue_wrap::game_rules_pane;
+        GP::Pane pane;
+        GR::Snapshot s;
+        if (!GP::Read(pane) || !GR::ReadLocal(s)) {
+            UE_LOGW("worldrules: pane layout UNAVAILABLE (the rules widget class is not loaded)");
+            return;
+        }
+        int rows = 0, unresolved = 0;
+        for (const GP::Category& cat : pane.categories) {
+            for (const GP::Row& row : cat.rows) {
+                const GR::Kind kind = row.control == GP::Control::Check ? GR::Kind::Bool
+                                    : row.control == GP::Control::Slider ? GR::Kind::Float : GR::Kind::Enum;
+                const GR::RuleField* rule = GR::NthOfKind(s.fields, kind, row.index);
+                ++rows;
+                if (!rule) ++unresolved;
+                UE_LOGI("worldrules: pane [%s%s] '%s' -> %s = %s", cat.name.c_str(), cat.hidden ? ", hidden" : "",
+                        row.label.c_str(), rule ? rule->key.c_str() : "(no rule)",
+                        rule ? (rule->kind == GR::Kind::Enum && !rule->valueName.empty() ? rule->valueName
+                                                                                          : ValueText(*rule)).c_str()
+                             : "?");
+            }
+        }
+        UE_LOGI("worldrules: pane categories=%d rows=%d unresolved=%d", static_cast<int>(pane.categories.size()),
+                rows, unresolved);
     });
 
     constexpr int kLatchCeilingMs = 30000;  // the game's first settings apply lands seconds into a world
