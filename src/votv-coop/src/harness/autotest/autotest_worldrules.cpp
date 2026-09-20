@@ -177,6 +177,20 @@ void RunWorldRulesProbe() {
     }
     if (disagree == 0) UE_LOGI("worldrules: player latches:%s -- agree after %d s", text.c_str(), waitedMs / 1000);
     else UE_LOGW("worldrules: player latches:%s -- STILL DISAGREE after %d s", text.c_str(), waitedMs / 1000);
+    // The save's day: the boot hands it to the gamemode through mainGameInstance.startDay, and the
+    // gamemode zeroes that field once it has taken it. So a day > 0 in the boot's log line and a 0
+    // here is the block having run; a value still standing here is a gamemode that never took it.
+    // Read AFTER the latches agree: the player's latches are filled in the gamemode's BeginPlay, the
+    // same synchronous chain that takes the day, and a host's player stands before that chain runs.
+    OnGameThread([] {
+        namespace R = ue_wrap::reflection;
+        void* gi = R::FindObjectByClass(L"mainGameInstance_C");
+        const int32_t off = gi ? R::FindPropertyOffset(R::ClassOf(gi), L"startDay") : -1;
+        if (off < 0) { UE_LOGW("worldrules: startDay unreadable"); return; }
+        UE_LOGI("worldrules: startDay now=%d (0 = the gamemode took the save's day)",
+                *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(gi) + off));
+    });
+
     UE_LOGI("worldrules: DONE role=%s rules=%d mismatches=%d latch-disagreements=%d", role, rules, mismatches,
             disagree);
 }
