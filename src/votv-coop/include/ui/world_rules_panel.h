@@ -1,15 +1,15 @@
 // ui/world_rules_panel.h -- the F1 > World > Rules content pane (EVERYONE).
 //
-// A read-only list of the world rules THIS peer is running under (mainGameInstance.gameRules --
-// fall damage, difficulty, seasons, funny, custom content, food spoilage, the minigame toggles,
-// ...) plus the gamemode. Shown to host, clients AND solo: a non-dev, non-host F1 category.
+// A read-only view of the world rules THIS peer is running under, laid out as the game's own rules
+// pane lays them out: its categories, its order, its names and descriptions, the enum values by
+// their names. The layout is read from the game (ue_wrap::game_rules_pane), so a rule the game adds
+// appears here too, under "Other" until the game's pane places it. Shown to host, clients and
+// solo: a non-dev, non-host F1 category.
 //
-// It reads the LOCAL GameInstance copy on purpose: a joining client boots from the host's
-// live-captured save, so once VOTV's load applies localGameRules -> GI.gameRules every peer's
-// list equals the host's -- and if it DOESN'T, the mismatch stays visible here instead of being
-// masked by a broadcast. The read is a one-shot game-thread snapshot taken on (re)open; the
-// render just paints the cached result. Principle 7: the reflected read lives in
-// ue_wrap::game_rules; this file only renders.
+// The values are the per-process copy the game reads its rules from. The host's save sets it on
+// every peer at load; the panel says so when that copy and the saved one differ. The reads are a
+// one-shot game-thread snapshot taken on (re)open; the render paints the cached result.
+// Principle 7: the reflected reads live in ue_wrap; this file only renders.
 
 #pragma once
 

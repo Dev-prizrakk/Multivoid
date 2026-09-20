@@ -2,6 +2,7 @@
 
 #include "ue_wrap/world/game_rules.h"
 
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 
@@ -75,11 +76,32 @@ std::string PrettyLabel(const std::wstring& name) {
     return out;
 }
 
+// The game's display name of one enumerator, through the same library function its rules pane
+// fills its combo boxes with. Empty when the library or the enum is not there.
+std::string EnumValueName(void* enumObj, uint8_t value) {
+    static void* sCdo = nullptr;
+    static void* sFn = nullptr;
+    if (!enumObj) return {};
+    if (!sCdo) sCdo = R::FindClassDefaultObject(L"KismetNodeHelperLibrary");
+    if (sCdo && !sFn) sFn = R::FindFunction(R::ClassOf(sCdo), L"GetEnumeratorUserFriendlyName");
+    if (!sCdo || !sFn) return {};
+    ue_wrap::ParamFrame f(sFn);
+    if (!f.valid() || !f.Set<void*>(L"Enum", enumObj) || !f.Set<uint8_t>(L"EnumeratorValue", value)) return {};
+    if (!ue_wrap::Call(sCdo, f)) return {};
+    R::FString ret{};
+    if (!f.GetRaw(L"ReturnValue", &ret, sizeof(ret)) || !ret.Data) return {};
+    std::string out;
+    for (int32_t i = 0; i + 1 < ret.Num; ++i) out.push_back(static_cast<char>(ret.Data[i]));
+    R::EngineFree(ret.Data);  // the returned string is ours: the frame is freed raw, not destructed
+    return out;
+}
+
 // The rules struct at `owner.<prop>`, member by member. The struct is all bool + TEnumAsByte(1) +
 // float(4) (no int32/FName), so: FindBoolProperty -> Bool; else size==4 -> Float; else 1-byte ->
 // Enum. A future recook that adds an int32 member would render as Float, caught at the next
-// struct re-RE.
-bool ReadRulesAt(void* owner, const wchar_t* prop, std::vector<RuleField>& out) {
+// struct re-RE. `withNames` also asks the game for each enum value's display name, one UFunction
+// call per enum member: for a reader that shows the rules, not for the boot path's compare.
+bool ReadRulesAt(void* owner, const wchar_t* prop, std::vector<RuleField>& out, bool withNames) {
     out.clear();
     void* cls = owner ? R::ClassOf(owner) : nullptr;
     if (!cls) return false;
@@ -104,6 +126,10 @@ bool ReadRulesAt(void* owner, const wchar_t* prop, std::vector<RuleField>& out) 
         } else {
             rf.kind = Kind::Enum;
             rf.ival = base[fi.offset];
+            if (withNames) {
+                rf.valueName = EnumValueName(R::PropertyEnum(structObj, fi.name.c_str()),
+                                             static_cast<uint8_t>(rf.ival));
+            }
         }
         out.push_back(std::move(rf));
     }
@@ -136,15 +162,23 @@ bool ReadLocal(Snapshot& out) {
         else    out.gamemodeName = "#" + std::to_string(out.gamemode);
     }
 
-    out.valid = ReadRulesAt(gi, L"gameRules", out.fields);
+    out.valid = ReadRulesAt(gi, L"gameRules", out.fields, /*withNames=*/true);
 
     // The saved copy, off the save object the GameInstance holds for this world.
     const int32_t saveOff = R::FindPropertyOffset(giClass, L"save_gameInst");
     if (saveOff >= 0) {
         void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + saveOff);
-        if (save && R::IsLive(save)) out.savedValid = ReadRulesAt(save, L"localGameRules", out.saved);
+        if (save && R::IsLive(save)) out.savedValid = ReadRulesAt(save, L"localGameRules", out.saved, /*withNames=*/true);
     }
     return out.valid;
+}
+
+const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n) {
+    for (const RuleField& f : rules) {
+        if (f.kind != kind) continue;
+        if (n-- == 0) return &f;
+    }
+    return nullptr;
 }
 
 int ApplySavedToProcess(void* gameInstance, void* save) {
@@ -166,8 +200,8 @@ int ApplySavedToProcess(void* gameInstance, void* save) {
     if (std::memcmp(dst, src, static_cast<size_t>(size)) == 0) return 0;
 
     std::vector<RuleField> before, saved;
-    ReadRulesAt(gameInstance, L"gameRules", before);
-    ReadRulesAt(save, L"localGameRules", saved);
+    ReadRulesAt(gameInstance, L"gameRules", before, /*withNames=*/false);
+    ReadRulesAt(save, L"localGameRules", saved, /*withNames=*/false);
     int changed = 0;
     for (size_t i = 0; i < before.size() && i < saved.size(); ++i) {
         const RuleField& a = before[i];

@@ -288,6 +288,13 @@ int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 // if the property is not found or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
 
+// The UEnum* behind a byte-typed enum property (FByteProperty::Enum), e.g. a blueprint struct's
+// TEnumAsByte member: the object to ask for an enumerator's display name. It is the first payload
+// member after the FProperty base, the same boundary as FStructProperty::Struct, so both slots are
+// probed and the candidate is validated as a live object of an enum meta-class. Null if the
+// property is not found, is a plain byte, or no slot validates. Cache the result.
+void* PropertyEnum(void* owningStruct, const wchar_t* propName);
+
 // The size in bytes of one instance of `structOrClass` (UStruct::PropertiesSize): what a whole-value
 // copy of a struct property moves. 0 for null.
 int32_t StructSize(void* structOrClass);

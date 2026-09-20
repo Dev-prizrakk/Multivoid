@@ -173,6 +173,21 @@ void* PropertyInnerStruct(void* owningClass, const wchar_t* propName) {
     return nullptr;
 }
 
+void* PropertyEnum(void* owningStruct, const wchar_t* propName) {
+    uint8_t* field = FindPropertyField(owningStruct, propName);
+    if (!field) return nullptr;
+    for (int32_t cand : { 0x70, 0x78 }) {
+        if (g_structPropSlot >= 0 && cand != g_structPropSlot) continue;  // one boundary per build
+        void* p = *reinterpret_cast<void**>(field + cand);
+        if (!PlausibleHeapPtr(p) || !IsLive(p)) continue;
+        void* cls = ClassOf(p);
+        if (!cls) continue;
+        const FName& cn = NameOf(cls);
+        if (NameEquals(cn, L"UserDefinedEnum") || NameEquals(cn, L"Enum")) return p;
+    }
+    return nullptr;
+}
+
 namespace {
 
 // FBoolProperty payload slot (= sizeof(FProperty), same boundary as

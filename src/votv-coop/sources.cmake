@@ -120,6 +120,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_rules.cpp
+    src/ue_wrap/world/game_rules_pane.cpp
     src/ue_wrap/engine/spawn_menu.cpp
     src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp

@@ -29,8 +29,9 @@ struct RuleField {
     std::string label;
     Kind        kind = Kind::Bool;
     bool        bval = false;   // Kind::Bool
-    int         ival = 0;       // Kind::Enum (raw ordinal -- VOTV strips enum
-                                //             display names in the cook)
+    int         ival = 0;       // Kind::Enum: the ordinal
+    std::string valueName;      // Kind::Enum: the game's own name for it ("Normal"); empty if the
+                                //             enum object did not resolve
     float       fval = 0.f;     // Kind::Float
 };
 
@@ -47,6 +48,11 @@ struct Snapshot {
 // stays false) if the GameInstance / gameRules struct isn't resolvable yet
 // (still booting). Game-thread only.
 bool ReadLocal(Snapshot& out);
+
+// The `n`-th rule of `kind` in declaration order, or null. The game's rules pane addresses a rule
+// this way: a checkbox row carries the index of its bool among the bools, the slider row of its
+// float among the floats, a combo row of its enum among the enums.
+const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n);
 
 // Put the save's rules in force: copy `save.localGameRules` over `gameInstance.gameRules`. The
 // game does this in its slot menu on the way into a world (ui_saveSlots, the one blueprint that
