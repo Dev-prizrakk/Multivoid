@@ -3,6 +3,7 @@
 #include "coop/session/join_progress.h"
 
 #include "ui/join_curtain.h"  // drop the curtain on a join abort (not the normal complete path)
+#include "coop/session/rig_ready.h"
 #include "coop/session/shutdown.h"  // IsShuttingDown -- suppress the failure dialog during teardown
 #include "ue_wrap/core/log.h"
 
@@ -235,6 +236,7 @@ void Complete() {
     g_stage.store(static_cast<int>(Stage::None), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Idle), std::memory_order_release);
     UE_LOGI("join_progress: Complete -- loading screen down (applied %u/%u)", applied, total);
+    coop::rig_ready::Say("joined");
 }
 
 void Reset() {

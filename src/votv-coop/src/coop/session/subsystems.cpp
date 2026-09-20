@@ -41,6 +41,7 @@
 #include "coop/creatures/wisp_attack_sync.h"  // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_grab_hold.h"  // Killer Wisp: grab-window body placement (per-slot/full teardown)
 #include "coop/creatures/wisp_tear_mirror.h"  // Killer Wisp coop: victim kill + tear mirror
+#include "coop/session/rig_ready.h"
 #include "coop/session/pause_guard.h"  // coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
@@ -263,6 +264,7 @@ namespace {
 void ConnectReplayForSlot(int slot) {
     if (slot < 1 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     UE_LOGI("net: slot %d world-ready -- replaying snapshot + flashlight + weather + peer states", slot);
+    coop::rig_ready::Say("peer-world-ready", slot);
     // Before the snapshot, explicit per-key destroys for props this joiner's blob had that the
     // host's live world no longer has (grabbed or destroyed during the download and load), so the
     // client drops exactly those rather than the divergence sweep inferring the deletes. On the

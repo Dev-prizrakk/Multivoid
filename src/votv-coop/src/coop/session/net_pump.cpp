@@ -27,6 +27,7 @@
 #include "coop/props/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
 #include "coop/props/join_membership_sweep.h"  // the join claim and the divergence sweep
 #include "coop/session/player_handshake.h"
+#include "coop/session/rig_ready.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_element_tracker.h"
@@ -419,6 +420,7 @@ void Tick(coop::net::Session& session) {
                 UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent + load "
                         "tail quiesced%s)",
                         reAnnounce ? " -- re-announce after world-change" : "");
+                coop::rig_ready::Say("world-ready");
             }
         }
     }

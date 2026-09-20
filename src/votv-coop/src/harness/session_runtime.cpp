@@ -42,6 +42,7 @@
 #include "coop/player/run_end_travel.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/player_handshake.h"
+#include "coop/session/rig_ready.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/session/shutdown.h"
@@ -465,6 +466,8 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
             netCfg.role == coop::net::Role::Host ? "host" : "client",
             netCfg.topology == coop::net::Topology::P2P ? "p2p" : "lan-direct",
             ok ? "" : " -- START FAILED");
+    // Every host start is made in a loaded world (the boot load or the picker's load comes first).
+    if (ok && netCfg.role == coop::net::Role::Host) coop::rig_ready::Say("hosting");
     return ok;
 }
 
