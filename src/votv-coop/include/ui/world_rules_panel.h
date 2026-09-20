@@ -8,7 +8,8 @@
 //
 // The values are the per-process copy the game reads its rules from. The host's save sets it on
 // every peer at load; the panel says so when that copy and the saved one differ. The reads are a
-// one-shot game-thread snapshot taken on (re)open; the render paints the cached result.
+// game-thread snapshot taken on (re)open and on a world change, retried once a second, a bounded
+// number of times, while a world is still bringing its save object up; the render paints the cache.
 // Principle 7: the reflected reads live in ue_wrap; this file only renders.
 
 #pragma once

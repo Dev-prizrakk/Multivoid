@@ -53,6 +53,7 @@ struct View {
 std::mutex       g_mx;
 View             g_published;        // guarded by g_mx
 GP::Pane         g_pane;             // game thread only: the game's layout, fixed for a process
+uint32_t         g_paneTriedGen = 0; // game thread only: the world generation of the last failed read
 bool             g_pending = false;  // a game-thread read is in flight (guarded by g_mx)
 std::atomic<int> g_generation{0};
 int              g_lastFrame = -1000;
@@ -104,10 +105,16 @@ void BuildAndPublish() {
     View view;
     GR::Snapshot snap;
     if (GR::ReadLocal(snap) && snap.valid) {
-        if (!g_pane.valid) GP::Read(g_pane);
+        // The layout is read until it has been read once. A failed read costs a walk of every object
+        // (the widget class was not found), and whether the class is loaded can only change with a
+        // world, so a failure is not tried again until the world has changed.
+        const uint32_t worldGen = ue_wrap::world_identity::Generation();
+        if (!g_pane.valid && g_paneTriedGen != worldGen && !GP::Read(g_pane)) g_paneTriedGen = worldGen;
         GP::LockInputs lock;
         GP::ReadLockInputs(lock);
-        view.settled = snap.savedValid && lock.valid && g_pane.valid;
+        // Settled = the two inputs a world brings up late are both in. The layout is not one of them:
+        // without it the panel lists the rules flat, and that is a final answer for this world.
+        view.settled = snap.savedValid && lock.valid;
         // The game's pane greys "Permanent season" while "Enable permanent season" is off
         // (ui_gameRulesList.updChanges); the two are known here by their rule names.
         bool permanentSeasonOn = true;
@@ -169,7 +176,8 @@ void Render() {
     static uint32_t s_worldGen = 0;  // render thread only
     const uint32_t worldGen = ue_wrap::world_identity::Generation();
     const int frame = ImGui::GetFrameCount();
-    if (frame > g_lastFrame + 1 || worldGen != s_worldGen) RequestSnapshot();
+    const bool edge = frame > g_lastFrame + 1 || worldGen != s_worldGen;
+    if (edge) RequestSnapshot();
     g_lastFrame = frame;
     s_worldGen = worldGen;
 
@@ -186,12 +194,17 @@ void Render() {
         s_viewGen = gen;
     }
     // A snapshot taken while a gameplay world was still coming up (no save object, no gamemode
-    // profile yet) is retried once a second until one settles; a settled one is final until the next
-    // edge above. Outside a gameplay world there is nothing to wait for, so nothing is retried.
+    // profile yet) is retried once a second until one settles, at most kSettleRetries times per edge
+    // above: a world that has not brought them up by then is not going to, and the panel shows what
+    // it has. Outside a gameplay world there is nothing to wait for, so nothing is retried.
+    constexpr int kSettleRetries = 20;
     static double s_nextRetry = 0.0;  // render thread only
+    static int    s_retriesLeft = 0;
+    if (edge) s_retriesLeft = kSettleRetries;
     const bool inWorld = ue_wrap::world_identity::CurrentWorldKind() == ue_wrap::world_identity::WorldKind::Gameplay;
-    if (inWorld && !s_view.settled && ImGui::GetTime() >= s_nextRetry) {
+    if (inWorld && !s_view.settled && s_retriesLeft > 0 && ImGui::GetTime() >= s_nextRetry) {
         s_nextRetry = ImGui::GetTime() + 1.0;
+        --s_retriesLeft;
         RequestSnapshot();
     }
     if (!s_view.valid) {
