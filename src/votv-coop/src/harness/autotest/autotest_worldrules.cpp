@@ -1,64 +1,154 @@
 // harness/autotest/autotest_worldrules.cpp -- the world-rules probe
-// (VOTVCOOP_RUN_WORLDRULES_PROBE): exercises the F1>World>Rules read path on
-// both peers and measures G1. The interface and the description live in
+// (VOTVCOOP_RUN_WORLDRULES_PROBE): reads BOTH copies of the world rules on a peer and logs every
+// rule, so a rig can compare the copies and the peers. The interface and the description live in
 // harness/autotest.h.
 
 #include "harness/autotest.h"
 
+#include "coop/player/players_registry.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/net_pump.h"
 #include "ue_wrap/world/game_rules.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"
 
 #include <atomic>
+#include <cstdio>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace harness::autotest {
 namespace {
 
 namespace GT = ue_wrap::game_thread;
+namespace GR = ue_wrap::game_rules;
+
+std::string ValueText(const GR::RuleField& f) {
+    char buf[32];
+    switch (f.kind) {
+        case GR::Kind::Bool:  return f.bval ? "On" : "Off";
+        case GR::Kind::Float: std::snprintf(buf, sizeof(buf), "%.2f", f.fval); return buf;
+        case GR::Kind::Enum:  std::snprintf(buf, sizeof(buf), "#%d", f.ival); return buf;
+    }
+    return "?";
+}
+
+// This peer's world is up and, on a client, its join is over: the moment the rules a session runs
+// under are whatever they are going to be. Game thread.
+bool PeerIsReady() {
+    void* player = coop::players::Registry::Get().Local();
+    if (!player || !ue_wrap::reflection::IsLive(player) || !ue_wrap::engine::GetController(player)) return false;
+    if (!IsClientRole()) return true;
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+}
+
+// One task on the game thread, waited for.
+template <typename Fn>
+void OnGameThread(Fn fn) {
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    GT::Post([fn, ran] { fn(); ran->store(true); });
+    while (!ran->load()) ::Sleep(5);
+}
+
+const GR::RuleField* Find(const std::vector<GR::RuleField>& rules, const char* key) {
+    for (const GR::RuleField& f : rules) if (f.key == key) return &f;
+    return nullptr;
+}
+
+// The three values the local player keeps from the rules, against the rules they come from. The
+// player refills them whenever the game applies its settings (mainPlayer.intComs_settingsApplied),
+// the first time a few seconds into a world, so they trail the rules and are waited for. Returns
+// how many disagree, -1 when the player or a rule is not there. Game thread.
+int LatchDisagreements(std::string& text) {
+    text.clear();
+    void* player = coop::players::Registry::Get().Local();
+    GR::Snapshot s;
+    if (!player || !ue_wrap::reflection::IsLive(player) || !GR::ReadLocal(s) || !s.valid) return -1;
+    void* cls = ue_wrap::reflection::ClassOf(player);
+    struct Row { const wchar_t* latch; const char* rule; bool fromSaved; };
+    // Blood loss is one of the three rules the game reads off the save object, not the process copy.
+    static const Row kRows[] = {{L"canFallDamage", "fallDamage", false},
+                                {L"enableWaterFallDamage", "enableWaterFallDamage", false},
+                                {L"enableBloodLoss", "bloodLoss", true}};
+    int disagree = 0;
+    for (const Row& row : kRows) {
+        int32_t off = -1;
+        uint8_t mask = 0;
+        const GR::RuleField* rule = Find(row.fromSaved ? s.saved : s.fields, row.rule);
+        if (!rule || !ue_wrap::reflection::FindBoolProperty(cls, row.latch, off, mask) || off < 0) return -1;
+        const bool latched = (reinterpret_cast<uint8_t*>(player)[off] & mask) != 0;
+        if (latched != rule->bval) ++disagree;
+        char item[96];
+        std::snprintf(item, sizeof(item), " %ls=%s(rule %s)", row.latch, latched ? "On" : "Off",
+                      rule->bval ? "On" : "Off");
+        text += item;
+    }
+    return disagree;
+}
 
 }  // namespace
 
 // --- World-rules probe (VOTVCOOP_RUN_WORLDRULES_PROBE=1) ----------------------
 //
-// Exercises the EXACT read path behind the F1 > World > Rules panel
-// (ue_wrap::game_rules::ReadLocal) on BOTH peers and logs every rule. Two jobs:
-//   (1) proves the reflected gameRules read works + doesn't crash (the panel is
-//       UI-only, so a headless smoke can't otherwise run its code), and
-//   (2) MEASURES G1 -- diff the host's `worldrules:` lines against the client's;
-//       equal rule set == the host's rules reached the client's GI.gameRules for
-//       free via the save-load spine.
-// Waits for gameplay + the client's save-load to settle before reading.
+// The game keeps the world rules twice: the SAVED copy on the save object (localGameRules) and the
+// PER-PROCESS copy on the GameInstance (gameRules), which is the one nearly every rule is read
+// from. The probe logs both on each peer, one line per rule, and marks a rule whose copies differ;
+// then it waits for the values the local player keeps from the rules to agree with them. It can
+// only tell anything on a world whose rules are not the defaults (tools/rig_rules_slot.py makes
+// one): two peers showing the same default is not a value that travelled.
+//   worldrules:   <key> process=<v> saved=<v>[ MISMATCH]
+//   worldrules: player latches: <latch>=<v>(rule <v>) ... -- agree after <n> s | STILL DISAGREE
+//   worldrules: DONE role=<host|client> rules=<n> mismatches=<m> latch-disagreements=<k>
+// The last is the line a rig waits on; the role is in it because a rig reads both logs and the
+// host is done long before a client. The probe waits on readiness, not on a clock: the host reads
+// once its player stands, a client once its join is over, and the latches are polled until they
+// agree, with a ceiling that ends the wait as a failure.
 void RunWorldRulesProbe() {
-    UE_LOGI("worldrules: probe start (waiting 35 s for gameplay + client save-load settle)");
-    ::Sleep(35000);
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done] {
-        ue_wrap::game_rules::Snapshot s;
-        if (!ue_wrap::game_rules::ReadLocal(s) || !s.valid) {
+    const char* role = IsClientRole() ? "client" : "host";
+    UE_LOGI("worldrules: probe start (%s, waiting for this peer to be ready)", role);
+    for (bool ready = false; !ready; ) {
+        OnGameThread([&ready] { ready = PeerIsReady(); });
+        if (!ready) ::Sleep(250);
+    }
+
+    int rules = 0, mismatches = 0;
+    OnGameThread([&rules, &mismatches] {
+        GR::Snapshot s;
+        if (!GR::ReadLocal(s) || !s.valid) {
             UE_LOGW("worldrules: ReadLocal failed / not valid (GameInstance not up?)");
-            done->store(2);
             return;
         }
-        UE_LOGI("worldrules: gamemode=%s  (%d rules)", s.gamemodeName.c_str(),
-                static_cast<int>(s.fields.size()));
-        for (const auto& f : s.fields) {
-            switch (f.kind) {
-                case ue_wrap::game_rules::Kind::Bool:
-                    UE_LOGI("worldrules:   %-28s = %s", f.label.c_str(), f.bval ? "On" : "Off");
-                    break;
-                case ue_wrap::game_rules::Kind::Float:
-                    UE_LOGI("worldrules:   %-28s = %.2f", f.label.c_str(), f.fval);
-                    break;
-                case ue_wrap::game_rules::Kind::Enum:
-                    UE_LOGI("worldrules:   %-28s = #%d", f.label.c_str(), f.ival);
-                    break;
-            }
+        rules = static_cast<int>(s.fields.size());
+        UE_LOGI("worldrules: gamemode=%s rules=%d saved-copy=%s", s.gamemodeName.c_str(), rules,
+                s.savedValid ? "read" : "UNAVAILABLE");
+        for (size_t i = 0; i < s.fields.size(); ++i) {
+            const GR::RuleField& f = s.fields[i];
+            const std::string process = ValueText(f);
+            const std::string saved = (s.savedValid && i < s.saved.size()) ? ValueText(s.saved[i]) : "?";
+            const bool differs = s.savedValid && saved != process;
+            if (differs) ++mismatches;
+            UE_LOGI("worldrules:   %-24s process=%-5s saved=%-5s%s", f.key.c_str(), process.c_str(),
+                    saved.c_str(), differs ? " MISMATCH" : "");
         }
-        UE_LOGI("worldrules: DONE (diff host vs client `worldrules:` lines for G1)");
-        done->store(1);
     });
-    while (done->load() == 0) ::Sleep(5);
+
+    constexpr int kLatchCeilingMs = 30000;  // the game's first settings apply lands seconds into a world
+    int disagree = -1, waitedMs = 0;
+    std::string text;
+    for (;;) {
+        OnGameThread([&disagree, &text] { disagree = LatchDisagreements(text); });
+        if (disagree == 0 || waitedMs >= kLatchCeilingMs) break;
+        ::Sleep(250);
+        waitedMs += 250;
+    }
+    if (disagree == 0) UE_LOGI("worldrules: player latches:%s -- agree after %d s", text.c_str(), waitedMs / 1000);
+    else UE_LOGW("worldrules: player latches:%s -- STILL DISAGREE after %d s", text.c_str(), waitedMs / 1000);
+    UE_LOGI("worldrules: DONE role=%s rules=%d mismatches=%d latch-disagreements=%d", role, rules, mismatches,
+            disagree);
 }
 
 DWORD WINAPI WorldRulesProbeThread(LPVOID /*arg*/) {

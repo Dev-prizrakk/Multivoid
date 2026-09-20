@@ -60,10 +60,13 @@ DWORD WINAPI PileDriftScenarioThread(LPVOID arg);
 void RunClumpVisProbe();
 DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
 
-// The world-rules probe (harness/autotest/autotest_worldrules.cpp), both peers: runs the
-// F1 > World > Rules read path (ue_wrap::game_rules::ReadLocal) and logs every rule, so a diff
-// of the two peers' `worldrules:` lines shows whether the host's rules reached the client's
-// game instance. Env VOTVCOOP_RUN_WORLDRULES_PROBE=1.
+// The world-rules probe (harness/autotest/autotest_worldrules.cpp), both peers: reads the rules
+// panel's path (ue_wrap::game_rules::ReadLocal) once the peer is ready and logs every rule with
+// BOTH of its copies, the per-process one the game reads and the saved one, marking a rule whose
+// copies differ, then waits for the values the local player keeps from the rules to agree with
+// them. Ends on `worldrules: DONE role=<r> rules=<n> mismatches=<m> latch-disagreements=<k>`. It tells something only on a
+// world whose rules are not the defaults (tools/rig_rules_slot.py). Env
+// VOTVCOOP_RUN_WORLDRULES_PROBE=1.
 void RunWorldRulesProbe();
 DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
 
