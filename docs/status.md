@@ -57,7 +57,7 @@ host validates and commits contested writes), `local` (never shared).
 |---|---|---|---|---|
 | Doors, keypads, locks | door state and lock state; keypad digits mirrored, accept and deny replayed | host and presser | snapshot | works |
 | Lights and light groups | switch state; the group's live state | presser; host for the group | snapshot | built |
-| Power panels, turbine, grime, windows, appliances | the mask, the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
+| Power panels, turbine, grime, windows, appliances, cargo lift | the mask, the float, the decrease-only cleanliness, the one-bit states; the lift controller edge | presser or host | snapshot | built; windows tested; cargo lift unverified |
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |
 | Desk input and console | field-granular input deltas, cooldown charges, the console text | presser; host relays | seed | works, five known breaks |
 | Dish | the dish pose, the client's own simulation parked | host | snapshot | works, one known break |

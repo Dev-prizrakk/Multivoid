@@ -38,6 +38,7 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::LightState:
     case net::ReliableKind::ContainerState:
     case net::ReliableKind::GarageDoorState:
+    case net::ReliableKind::CargoLiftState:
     case net::ReliableKind::ApplianceState:
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
     case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape

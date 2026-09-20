@@ -19,6 +19,7 @@
 #include "ue_wrap/core/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/actors/sleeping_bag.h"
 #include "ue_wrap/actors/prop.h"                   // the prop lineage, key, name and parity-identity accessors
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
@@ -133,7 +134,8 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
     if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;  // a host-authored mirror we adopt, not a place
-    if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;          // keyed Aprop_C lineage only
+    if (!ue_wrap::prop::IsDescendantOfProp(actor) &&
+        !ue_wrap::sleeping_bag::IsSleepingBagForm(actor)) return;
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked = not a fresh place
     // The hand-axis exclusion, the enqueue half (a fast path only, not load-bearing here: at
     // finish-spawn return the hold update has not yet written the holding actor, so the freshly
@@ -332,8 +334,14 @@ void Tick(coop::net::Session* session) {
         // this same client put into that device, and an eject reaches every other case.
         const bool isDiscBirth = ue_wrap::floppy_disc::EnsureResolved() &&
                                  ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(e.actor));
+        // A sleeping-bag deploy consumes its wrapped prop and births the laid-out form with a new
+        // key. The old key is parked by the destroy seam, but cannot admit the successor because
+        // the identities intentionally differ. Treat the family as a bounded fresh birth: the host
+        // whitelist below validates it, spawns the authority copy and the ordinary PropSpawn echo
+        // adopts the client's optimistic local form.
+        const bool isSleepingBagBirth = ue_wrap::sleeping_bag::IsSleepingBagForm(e.actor);
         const bool freshBirth = !parked &&
-            (isDiscBirth ||
+            (isDiscBirth || isSleepingBagBirth ||
              (ue_wrap::tape_caddy::EnsureResolved() &&
               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor))) ||
              (ue_wrap::phys_mods::EnsureResolved() &&
@@ -462,7 +470,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                          ue_wrap::drive_chain::IsDriveClass(clsObj);
     const bool isDisc = clsObj && ue_wrap::floppy_disc::EnsureResolved() &&
                         ue_wrap::floppy_disc::IsDiscClass(clsObj);
-    if (!isReel && !isModule && !isDrive && !isDisc) {
+    const bool isSleepingBag = ue_wrap::sleeping_bag::IsSleepingBagClass(clsObj);
+    if (!isReel && !isModule && !isDrive && !isDisc && !isSleepingBag) {
         UE_LOGW("[PROP-DROP] HOST birth intent from slot=%u rejected: class '%ls' not whitelisted",
                 senderSlot, cls.c_str());
         return;

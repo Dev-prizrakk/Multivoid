@@ -1,9 +1,9 @@
 // coop/interactables/interactable_sync.h -- keyed interactable open/close/on-off state sync. ONE
-// replication engine drives seven features through a shared Channel, with no per-feature copy:
+// replication engine drives eight features through a shared Channel, with no per-feature copy:
 //   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
 //   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
 //   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
-//   - GarageDoorState (33):  the garage     (Agarage_C, keyed by level-export name)
+//   - GarageDoorState (33) and CargoLiftState (140): placed controller edges
 //   - ApplianceState (35):   the save-actor appliance family
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)

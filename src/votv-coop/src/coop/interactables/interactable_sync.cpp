@@ -15,6 +15,7 @@
 #include "ue_wrap/engine/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/devices/garage.h"
+#include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/devices/lightswitch.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"          // GetKeyString for swinger (it is an Aprop_C)
@@ -182,6 +183,20 @@ const Adapter g_garageAdapter = {
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
+// The cargo lift is one machine, not three independent moving actors. Its controller owns the
+// direction flag and the native timeline that drives the prop_cargolift_C platform and both
+// cargoliftDoor_C child actors. Relaying that edge makes every peer run one coherent timeline;
+// syncing either door separately lets the two local timelines fight and produces the half-door
+// split. As with the garage, the placed actor's level-export name is the portable identity.
+const Adapter g_cargoLiftAdapter = {
+    "cargo_lift", coop::net::ReliableKind::CargoLiftState,
+    &ue_wrap::cargo_lift::EnsureResolved,
+    &ue_wrap::cargo_lift::IsCargoLift,
+    &ue_wrap::cargo_lift::GetNameKey,
+    &ue_wrap::cargo_lift::TryReadOpen,
+    [](void* a, bool on) -> bool { return ue_wrap::cargo_lift::ApplyOpen(a, on); },
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+};
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
 // ue_wrap::appliance dispatches by class to the right bool offset and refresh verb, so the peer's
@@ -216,6 +231,7 @@ Channel g_light{g_lightAdapter};
 Channel g_lightGroup{g_lightGroupAdapter, Channel::Mode::HostAuth};
 Channel g_container{g_containerAdapter};
 Channel g_garage{g_garageAdapter};  // no auto-revert: symmetric
+Channel g_cargoLift{g_cargoLiftAdapter};  // controller edge is symmetric
 Channel g_appliance{g_applianceAdapter};  // no auto-revert: symmetric
 Channel g_doorBox{g_doorBoxAdapter};  // no auto-revert: symmetric
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
@@ -229,6 +245,7 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
     case coop::net::ReliableKind::LightGroupState:return &g_lightGroup;
     case coop::net::ReliableKind::ContainerState: return &g_container;
     case coop::net::ReliableKind::GarageDoorState:return &g_garage;
+    case coop::net::ReliableKind::CargoLiftState: return &g_cargoLift;
     case coop::net::ReliableKind::ApplianceState: return &g_appliance;
     case coop::net::ReliableKind::LockerDoorState:return &g_doorBox;
     default:                                      return nullptr;
@@ -443,6 +460,7 @@ void IndexChannels() {
     g_lightGroup.RegisterWithScanHub();
     g_container.RegisterWithScanHub();
     g_garage.RegisterWithScanHub();
+    g_cargoLift.RegisterWithScanHub();
     g_appliance.RegisterWithScanHub();
     g_doorBox.RegisterWithScanHub();
 }
@@ -455,6 +473,7 @@ void Install(coop::net::Session* session) {
     g_lightGroup.SetSession(session);
     g_container.SetSession(session);
     g_garage.SetSession(session);
+    g_cargoLift.SetSession(session);
     g_appliance.SetSession(session);
     g_doorBox.SetSession(session);
     IndexChannels();              // build the key->actor index (sender polls it; receiver resolves by it)
@@ -485,6 +504,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     g_lightGroup.QueueConnectBroadcastForSlot(peerSlot);
     g_container.QueueConnectBroadcastForSlot(peerSlot);
     g_garage.QueueConnectBroadcastForSlot(peerSlot);
+    g_cargoLift.QueueConnectBroadcastForSlot(peerSlot);
     g_appliance.QueueConnectBroadcastForSlot(peerSlot);
     g_doorBox.QueueConnectBroadcastForSlot(peerSlot);
 }
@@ -495,6 +515,7 @@ void Tick() {
     g_lightGroup.Tick();
     g_container.Tick();
     g_garage.Tick();
+    g_cargoLift.Tick();
     g_appliance.Tick();
     g_doorBox.Tick();
     ue_wrap::door_box::TickVerify();  // force-snap far-frozen locker/console swings
@@ -506,6 +527,7 @@ void OnDisconnect() {
     g_lightGroup.OnDisconnect();
     g_container.OnDisconnect();
     g_garage.OnDisconnect();
+    g_cargoLift.OnDisconnect();
     g_appliance.OnDisconnect();
     g_doorBox.OnDisconnect();
     ue_wrap::door_box::OnDisconnect();  // drop the mid-swing verify entries

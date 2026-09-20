@@ -35,8 +35,10 @@ Two modes. A device that reverts on its own, a door that auto-closes or a light 
 re-derives, is host-authoritative: a client sends an open request, the host applies it under the
 real lock and jam guards and its poll broadcasts the authoritative state back, and a hold register
 keeps a door open while any peer holds it and closes it when the last holder leaves. A device
-with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any peer's edge is
-the state.
+with no auto-revert (the garage, the cargo-lift controller, an appliance, a locker, a lid) is
+symmetric: any peer's edge is the state. The cargo lift is one controller edge: every peer runs
+its native timeline, which moves the platform and both child doors together rather than treating
+the doors as independent devices.
 
 ### What is inside a container
 
@@ -244,7 +246,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | State | Owner | Shape |
 |---|---|---|
 | a door, a light group | the host | a client sends a request; the host's poll answers; a hold register |
-| a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
+| a light switch, a lid, the garage, the cargo lift, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
 | a keypad's buffer and its accept | the presser | the input mirrored; the native chain replayed |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
@@ -258,7 +260,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `DoorState`, `DoorOpenRequest`, `LightState`, `LightGroupState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed; the request to the host | a key and a state |
+| `DoorState`, `DoorOpenRequest`, `LightState`, `LightGroupState`, `ContainerState`, `GarageDoorState`, `CargoLiftState`, `ApplianceState`, `LockerDoorState` | each peer, relayed; the request to the host | a key and a state |
 | `KeypadState` | each peer, relayed | the buffer, the active flag, an accept or deny event |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
@@ -301,7 +303,7 @@ an error line.
 
 | Concept | Files |
 |---|---|
-| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/cargo_lift`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `ue_wrap/devices/drone` |

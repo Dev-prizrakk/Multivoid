@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 168;
+inline constexpr uint16_t kProtocolVersion = 169;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -716,6 +716,11 @@ enum class ReliableKind : uint8_t {
     // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
     // one request. GrabRefusedPayload.
     GrabRefused = 140,
+
+    // Any peer, relayed by the host: the cargo lift controller's direction state, keyed by its
+    // level-export actor name. Receivers run the same native controller timeline, which moves the
+    // platform and both child doors as one machine. KeyedTogglePayload.
+    CargoLiftState = 141,
 };
 
 #pragma pack(push, 1)

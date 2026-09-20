@@ -242,7 +242,7 @@ lane did not have in front of it:
 | `PropRelease` | the holder to all | the inherited linear and angular velocity |
 | `PropDrivePose` (stream) | the host to all | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation |
 | `PropDriveEnd` | the host to all | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
-| `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
+| `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth such as a deployed sleeping bag, for the host to author |
 | `PropStickState` | the sticking peer to all | frozen or static, and the commit pose |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
@@ -266,7 +266,7 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | Limit | Evidence |
 |---|---|
 | Two peers grabbing the same prop both stream it; nothing assigns the prop to one holder, so receivers follow whichever stream is newest | `[V]` `coop/props/remote_prop` has no claim |
-| A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract) never reaches the host, and nothing logs it | `[V]` `coop/props/prop_drop_intent` drops it at the drain |
+| A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births including sleeping bags, a container extract) never reaches the host, and nothing logs it | `[V]` `coop/props/prop_drop_intent` drops it at the drain |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
 | The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
 | A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it |
@@ -282,7 +282,7 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 |---|---|
 | the birth and death seams | `coop/props/prop_lifecycle`, `coop/props/host_spawn_watcher`, `coop/props/prop_element_tracker`, `coop/props/prop_synth_key`, `coop/props/registry_reaper`, `coop/props/prop_echo_suppress` |
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
-| a client's intents | `coop/props/prop_drop_intent` |
+| a client's intents | `coop/props/prop_drop_intent`, `ue_wrap/actors/sleeping_bag` |
 | the stick | `coop/props/prop_stick_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
