@@ -5,11 +5,9 @@
 // running session and for as long as the mirror world that session built is still what is loaded,
 // open otherwise -- so a player who has left plays single-player again and saves, and a host's save
 // is always written. The cycle block is set on the mirror's gamemode and dies with that world.
-//
 // The WRITE block is a gate on the engine's save function (ue_wrap/engine/save_to_slot_hook, the
 // chokepoint every save path funnels through): it cancels a write of the world-save container
 // (saveSlot_C); the harmless meta save (save_main_C) never reaches it.
-//
 // The CYCLE block holds gamemode.disableSave true, which saveSlot_C::save tests at its head and
 // returns on, before the world gather (saveObjects) and the write funnel. The gamemode's own
 // triggers funnel through save(), and no bytecode in mainGamemode ever writes disableSave; a few

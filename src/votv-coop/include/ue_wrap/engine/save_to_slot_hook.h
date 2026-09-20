@@ -1,6 +1,5 @@
 // ue_wrap/engine/save_to_slot_hook.h -- the detour on UGameplayStatics::SaveGameToSlot, the one
 // native function every save of the game funnels through.
-//
 // The Blueprint funnel above it (saveSlot_C::saveToSlot) is called Blueprint-to-Blueprint, which
 // dispatches through ProcessInternal and never reaches the ProcessEvent detour, so the engine's
 // own write function is the first place a save can be seen at all. MinHook takes one detour per
@@ -9,11 +8,9 @@
 //   * a WRITTEN notice, given after the engine reported a world save written.
 // Both see WORLD saves only -- a USaveGame that is a saveSlot_C. The meta save (save_main_C:
 // keybinds, achievements, store) passes straight through and is reported to nobody.
-//
 // A world save is not always THE world: the save-slot menu writes regenerated and copied
 // saveSlot_C objects of its own, and the join capture writes the live one to a scratch slot. The
 // object and the slot name are handed over so the caller can tell; this layer does not.
-//
 // Engine-wrapper layer (principle 7): no session, no role, no coop state. Both seams run on the
 // thread that called SaveGameToSlot, which for every save the game makes is the game thread.
 

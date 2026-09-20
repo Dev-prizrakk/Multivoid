@@ -60,10 +60,15 @@ capture it would mean a world from the last gather handed over as the live one: 
 destroyed since standing again in the joiner's world. So for the span of the capture's own call
 the wrapper refuses the event test those three functions make, at the script loop
 (`ue_wrap/core/script_gate`), and refuses the capture when it cannot show that the world gather
-ran, so that the stale fallback below is taken knowingly. What a forced gather lets through: event
-actors that implement the save interface (many do, by inheritance) are gathered like any other
-actor and ride the blob; a mirror lane that owns such a class already refuses its local spawn on
-a client.
+ran, so that the stale fallback below is taken knowingly. What a forced gather lets through: the
+gather writes the host's live save object in the middle of an event, which the game itself never
+does, and nothing puts it back, so a save the host makes later in the same event (it does not
+gather either) writes that mid-event world to the host's own slot; and event actors that
+implement the save interface are gathered like any other actor and ride the blob. Many do, by
+inheritance: of the 87 classes that register an event, 21 implement it, eleven through
+`actor_save_C`, seven through `prop_C`, and `ATV`, `kerfurOmega` and `firetank` directly. A mirror
+lane that owns such a class already refuses its local spawn on a client; for the rest the joiner
+runs the event's own actor from its saved state. Neither has been measured per class.
 The host then streams the file on the bulk lane in chunks paced by send-buffer backpressure (`coop/save/save_transfer`). The game
 writes a save in place, with no rename, so the file is trusted only when its size and timestamp
 hold across two polls and two full reads agree. If the live capture cannot run, the host streams

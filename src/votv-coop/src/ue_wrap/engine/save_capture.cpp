@@ -22,37 +22,19 @@ namespace P = ue_wrap::profile;
 namespace {
 
 // ---- saveObjects gathers NOTHING while the game says an event is on ---------------------------
-//
 // mainGamemode::saveObjects asks lib_C::getEvent before it walks the world, and on true it runs
-// the save animation and the held-object save, then what it had queued before the test (its two
-// sub-gathers, a clear of its scratch list and a garbage collection), and returns: `objectsData`,
-// `playerTransform`, the drone record and the rest of the gather are left exactly as the LAST
-// gather wrote them (cfg: saveObjects @502 -> @639 when isEventActive, -> @858 the actor loop
-// otherwise). getEvent
-// is `activeEvents > 0` OR the local camera outside the 90 000-unit box around the origin. For the
-// game that is "you cannot save during an event". For a capture it is a world from the past handed
-// over as the live one: measured with a badSun event running, a joiner's world held three props
-// the host had destroyed two minutes earlier, because the container still held the previous
-// capture's records (`objectsData 3949 -> 3949`).
-//
-// saveObjects is not the only one. It runs `Save Primitives` and `saveTriggers` on every path
-// (cfg: @492 and @497 push them before the event branch), and each of those opens with the same
-// test and skips ITS gather on true -- the int_primitive actors, and the int_ttrigger ones: doors,
-// lights, keypads. Three gatherers, one gate each.
-//
+// the save animation and the held-object save and returns: `objectsData`, `playerTransform`, the
+// drone record and the rest are left as the LAST gather wrote them. It runs `Save Primitives` and
+// `saveTriggers` on every path, and each opens with the same test and skips ITS gather: three
+// gatherers, one gate each. getEvent is `activeEvents > 0` OR the local camera outside the
+// 90 000-unit box around the origin. For the game that is "you cannot save during an event"; for
+// a capture it is a world from the past handed over as the live one (measured with a badSun event
+// running: a joiner's world held three props the host had destroyed two minutes earlier).
 // A capture is not a save, so for the span of OUR saveObjects call, and only for the getEvent
 // those three functions make, the body is refused at the VM's script loop and its out parameter
-// left false. The refusal itself writes nothing but that local. What it lets through does:
-//   * the gather writes the host's LIVE save object in the middle of an event, which the game
-//     itself never does; nothing puts it back, so a save the host makes later in the same event
-//     (it does not gather either) writes that mid-event world to the host's own slot;
-//   * event actors ARE gathered when they are int_save, and many are, by inheritance: of the 87
-//     classes that register an event, 21 implement int_save -- 11 through actor_save_C (badSun,
-//     fleshRain, erieChop, arirTrasher, skyUfo, ufoDropper, zombieHordeController, obelisk,
-//     roz_anim, midasufotest, outsideChurch), 7 through prop_C, and ATV, kerfurOmega and firetank
-//     directly. Their records ride the blob and the joiner's load spawns them. For the classes a
-//     mirror lane owns, that lane already refuses a local spawn on a client; for the rest the
-//     joiner runs the event's own actor from its saved state. Neither has been measured per class.
+// left false. What that lets through (docs/join.md, the save transfer): the gather writes the
+// host's LIVE save object mid-event, which the game never does, and event actors that are
+// int_save ride the blob; a lane that owns such a class refuses its local spawn on a client.
 bool  g_capturing = false;          // game thread: inside our saveObjects call
 void* g_saveObjectsFn = nullptr;    // the world gather: the one the gather hook speaks for
 void* g_saveTriggersFn = nullptr;

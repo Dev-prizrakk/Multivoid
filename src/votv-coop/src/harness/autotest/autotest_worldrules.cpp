@@ -99,8 +99,8 @@ int LatchDisagreements(std::string& text) {
 // PER-PROCESS copy on the GameInstance (gameRules), which is the one nearly every rule is read
 // from. The probe logs both on each peer, one line per rule, and marks a rule whose copies differ;
 // then it waits for the values the local player keeps from the rules to agree with them. It can
-// only tell anything on a world whose rules are not the defaults (tools/rig_rules_slot.py makes
-// one): two peers showing the same default is not a value that travelled.
+// only tell anything on a world whose rules are not the defaults: two peers showing the same
+// default is not a value that travelled.
 //   worldrules:   <key> process=<v> saved=<v>[ MISMATCH]
 //   worldrules: player latches: <latch>=<v>(rule <v>) ... -- agree after <n> s | STILL DISAGREE
 //   worldrules: DONE role=<host|client> rules=<n> mismatches=<m> latch-disagreements=<k>

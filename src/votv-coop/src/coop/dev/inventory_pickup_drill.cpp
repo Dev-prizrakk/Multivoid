@@ -350,7 +350,7 @@ void PocketTheWants(void* player) {
 // host loaded, once per arrival. `quick` writes twice per arrival: the player's quicksave, which
 // puts the live world in a NEW <slot>_SUB_<n> file, then the pause menu's plain save, which writes
 // the main slot -- two files from one world, which is what a profile set that follows the written
-// slot has to be seen doing. tools/mp.py puts the loaded slot and its profile files back after the
+// slot has to be seen doing. The test rig puts the loaded slot and its profile files back after the
 // run and reports the subsaves a run made. The arrival is read off the session as a whole, which is
 // enough for the two peers this drill is written for: a SECOND client arriving while the first is
 // still there is no edge, and a three-peer drill would need the edge per slot.

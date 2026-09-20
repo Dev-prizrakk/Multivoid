@@ -65,7 +65,7 @@ DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
 // BOTH of its copies, the per-process one the game reads and the saved one, marking a rule whose
 // copies differ, then waits for the values the local player keeps from the rules to agree with
 // them. Ends on `worldrules: DONE role=<r> rules=<n> mismatches=<m> latch-disagreements=<k>`. It tells something only on a
-// world whose rules are not the defaults (tools/rig_rules_slot.py). Env
+// world whose rules are not the defaults, which a save names in its localGameRules. Env
 // VOTVCOOP_RUN_WORLDRULES_PROBE=1.
 void RunWorldRulesProbe();
 DWORD WINAPI WorldRulesProbeThread(LPVOID arg);

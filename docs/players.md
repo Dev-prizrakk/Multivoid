@@ -176,7 +176,12 @@ world and entered the profile, so a stored profile newer than the saved world wo
 item twice after a host restart, and an older one would lose it. A host that quits without
 saving takes its players' profiles back to its last save together with its world. The copy that
 is written is the one taken when the game gathered the world into its save object, which during
-a game event is not the moment of the save (see [join.md](join.md), the save transfer). That identity is
+a game event is not the moment of the save (see [join.md](join.md), the save transfer). The
+profiles stand beside the file the world is in, under `coop_players/<save slot>/` in the game
+folder, and one world is written under more than one name: a quicksave writes a new subsave file,
+and a plain save made after loading a subsave writes the main slot, so a save to another slot
+first copies the whole set beside that file. A profile reaches the host up to a second after the
+pickup it reports, so a save inside that second holds a profile one pickup behind its world. That identity is
 a key file beside the game executable, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is
