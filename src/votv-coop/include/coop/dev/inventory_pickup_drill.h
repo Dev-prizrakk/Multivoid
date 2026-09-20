@@ -9,7 +9,8 @@
 // live_store_readout=1 the readout's `values` lines, read under the same key in both lives, are
 // the comparison. The host's half of the drill makes sure the world holds such a drive and disc,
 // and with VOTVCOOP_INV_PICKUP_DRILL_SAVE=1 also saves its world once a minute, which is the only
-// moment a host writes profiles to disk. Both peers print a census of the keys that stand in the
+// moment a host writes profiles to disk (`quick` alternates a quicksave, which writes a new subsave
+// file, with a plain save of the main slot). Both peers print a census of the keys that stand in the
 // world under the wanted classes, on change: a pickup is a destroy everywhere else, so a key that
 // comes back is a duplicate caught where it is born.
 // The pickup moves nobody: mainPlayer::putObjectInventory2 has no reach test. The same run then

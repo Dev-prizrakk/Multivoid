@@ -322,16 +322,20 @@ void PocketTheWants(void* player) {
     }
 }
 
-// HOST, with VOTVCOOP_INV_PICKUP_DRILL_SAVE=1: save the world through the game's own
+// HOST, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: save the world through the game's own
 // saveSlot_C::save, once a minute, six times. The host writes each player's profile to disk only
 // with its own world save, and a rig host never saves by itself, so without this the cut is never
-// exercised. The save lands in the slot the host loaded; tools/mp.py puts that slot and the
-// profile files beside it back after the run.
+// exercised. `1` writes the slot the host loaded every time. `quick` alternates the player's
+// quicksave, which writes the live world to a NEW <slot>_SUB_<n> file, with the pause menu's plain
+// save, which writes the main slot: the two name different files from one world, which is what a
+// profile set that follows the written slot has to be seen doing. tools/mp.py puts the loaded slot
+// and its profile files back after the run and reports the subsaves a run made.
 constexpr int kSaveTicks = 3600;  // ~1 min at the pump's ~60 Hz
 constexpr int kSaveRuns  = 6;
 
 void HostSaveTick() {
-    static const bool s_on = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE") == "1";
+    static const std::string s_mode = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE");
+    static const bool s_on = s_mode == "1" || s_mode == "quick";
     if (!s_on || !coop::roster::LocalIsHost()) return;
     static int s_ticks = 0, s_runs = 0;
     if (s_runs >= kSaveRuns || ++s_ticks < kSaveTicks) return;
@@ -343,21 +347,26 @@ void HostSaveTick() {
         UE_LOGE("[INV-PICKUP-DRILL] HOST save #%d: saveSlot_C::save did not resolve (slot=%p)", s_runs, slot);
         return;
     }
+    // saveToSlot, quicksave first: (true, *) -> a new subsave; (false, true) -> the loaded slot as
+    // named; (false, false) -> the main slot, also when a subsave is what was loaded.
+    const bool quick = s_mode == "quick" && (s_runs & 1);
+    const bool plain = s_mode == "quick" && !quick;
     ue_wrap::ParamFrame f(fn);
-    f.Set(L"quicksave", false);
-    f.Set(L"overwriteSubsave", true);  // the slot that was loaded, not a new subsave beside it
-    f.Set(L"isForcedSave", true);
+    f.Set(L"quicksave", quick);
+    f.Set(L"overwriteSubsave", !quick && !plain);
+    f.Set(L"isForcedSave", true);  // save() hands saveToSlot `false` whatever this says
     const bool called = ue_wrap::Call(slot, f);
-    UE_LOGI("[INV-PICKUP-DRILL] HOST save #%d through saveSlot_C::save -> %hs", s_runs,
+    UE_LOGI("[INV-PICKUP-DRILL] HOST save #%d through saveSlot_C::save (%hs) -> %hs", s_runs,
+            quick ? "quicksave: a new subsave" : plain ? "plain: the main slot" : "the loaded slot",
             called ? "called" : "CALL FAILED");
 }
 
-// CLIENT, with VOTVCOOP_INV_PICKUP_DRILL_SAVE=1: ask the engine to write this world's save object,
-// once. A client's save cycle is held off before it ever reaches the engine, so the gate on the
-// engine's save function is never asked in a normal run and would rot unseen. The slot name is a
-// scratch one the boot sweep removes, in case the gate ever lets it through.
+// CLIENT, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: ask the engine to write this world's save
+// object, once. A client's save cycle is held off before it ever reaches the engine, so the gate on
+// the engine's save function is never asked in a normal run and would rot unseen. The slot name is
+// a scratch one the boot sweep removes, in case the gate ever lets it through.
 void ClientWriteGateProbe() {
-    static const bool s_on = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE") == "1";
+    static const bool s_on = !::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE").empty();
     if (!s_on) return;
     void* slot = ue_wrap::inventory::ResolveSaveSlot();
     void* gsCdo = R::FindClassDefaultObject(L"GameplayStatics");
