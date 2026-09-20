@@ -1,11 +1,12 @@
 // ui/overlay_test_arm.cpp -- see ui/overlay_test_arm.h.
 //
-// The nine env blocks below keep their log strings exactly as written, because the probes grep for
+// The ten env blocks below keep their log strings exactly as written, because the probes grep for
 // them. The two writes that reach imgui_overlay go through its publics rather than its TU-locals:
 // SetVisible(true), and ForceScoreboardOpen() for the forced latch, documented at its declaration.
 
 #include "ui/overlay_test_arm.h"
 
+#include "ui/dev_menu.h"
 #include "ui/imgui_overlay.h"
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
@@ -15,6 +16,7 @@
 
 #include <windows.h>
 
+#include <cstring>
 #include <string>
 
 namespace ui::overlay_test_arm {
@@ -27,6 +29,17 @@ void ArmFromEnv() {
         menuEnv[0] == '1') {
         imgui_overlay::SetVisible(true);
         UE_LOGI("imgui_overlay: VOTVCOOP_MENU_OPEN=1 -- menu starts visible (screenshot test)");
+    }
+    // VOTVCOOP_MENU_TAB=<Category>/<Pane> opens the menu on one pane ("World/Rules"): the smoke
+    // cannot click a pane either.
+    char tabEnv[64] = {};
+    if (::GetEnvironmentVariableA("VOTVCOOP_MENU_TAB", tabEnv, sizeof(tabEnv)) > 0) {
+        if (char* slash = std::strchr(tabEnv, '/')) {
+            *slash = 0;
+            ui::dev_menu::RequestSelect(tabEnv, slash + 1);
+            UE_LOGI("imgui_overlay: VOTVCOOP_MENU_TAB=%s/%s -- menu opens on that pane (screenshot test)",
+                    tabEnv, slash + 1);
+        }
     }
     // VOTVCOOP_SCOREBOARD_OPEN=1 starts the player list visible (the smoke can't
     // hold/press the tilde key) -- autonomous screenshot of the roster.

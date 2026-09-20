@@ -26,4 +26,8 @@ void Render();
 // use this to gate dev-only actions (e.g. the host's "Teleport to me" entry).
 bool DevMode();
 
+// Open the menu on one pane, named as the tree names it ("World", "Rules"). For the autonomous
+// harness, which cannot click: the next Render selects it, if this peer may see it. Any thread.
+void RequestSelect(const char* category, const char* sub);
+
 }  // namespace ui::dev_menu

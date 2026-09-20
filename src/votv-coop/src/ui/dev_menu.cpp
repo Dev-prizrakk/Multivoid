@@ -29,9 +29,11 @@
 #include "ui/scale.h"
 #include "ui/skins_panel.h"
 
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "imgui.h"
@@ -473,7 +475,7 @@ void RenderFontPref() {
 void RenderAdminPlayers() { ui::admin_panel::Render(); }
 
 // F1 > World > Rules (non-dev, non-host -- shown to EVERYONE; ui/world_rules_panel
-// owns the pane; reads the local mainGameInstance.gameRules read-only).
+// owns the pane: the rules in force on this peer, laid out as the game's own pane).
 void RenderWorldRules() { ui::world_rules_panel::Render(); }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------
@@ -529,6 +531,11 @@ const std::vector<Cat>& Tree() {
 const Cat* g_selCat = nullptr;
 const Sub* g_selSub = nullptr;
 
+// A pane asked for by name (RequestSelect), taken by the next Render. The names are written before
+// the flag, and read only after it is seen set.
+std::string       g_wantCat, g_wantSub;
+std::atomic<bool> g_wantSelect{false};
+
 // Dev switch, read ONCE at boot by Init() (off the render thread). devMode=false
 // -> only non-dev (Cosmetics) shows; the menu itself is always available.
 bool g_devMode = false;
@@ -550,10 +557,28 @@ bool DevMode() {
     return g_devMode && ::coop::dev_gate::Allowed();
 }
 
+void RequestSelect(const char* category, const char* sub) {
+    if (!category || !sub || g_wantSelect.load(std::memory_order_acquire)) return;
+    g_wantCat = category;
+    g_wantSub = sub;
+    g_wantSelect.store(true, std::memory_order_release);
+}
+
 void Render() {
     const bool devMode = DevMode();
     const bool isHost  = coop::roster::LocalIsHost();  // lock-free, render-thread safe
     const auto& tree = Tree();
+
+    if (g_wantSelect.exchange(false, std::memory_order_acq_rel)) {
+        for (const auto& cat : tree) {
+            if (g_wantCat != cat.name || (cat.dev && !devMode) || (cat.host && !isHost)) continue;
+            for (const auto& sub : cat.subs) {
+                if (g_wantSub != sub.name || (sub.dev && !devMode) || (sub.host && !isHost)) continue;
+                g_selCat = &cat;
+                g_selSub = &sub;
+            }
+        }
+    }
 
     // A host-gated selection must not linger after the role drops (session stop /
     // becoming a client): reset the pane back to the picker.

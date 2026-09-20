@@ -1,10 +1,10 @@
 // ui/overlay_test_arm.h -- TEST-ONLY env-var arming of overlay surfaces and browser-path session
 // scenarios: the autonomous harness's entry seam into the UI, off the hot file.
 //
-// Nine VOTVCOOP_* variables, read once from imgui_overlay::Init() right after the present hook is
+// Ten VOTVCOOP_* variables, read once from imgui_overlay::Init() right after the present hook is
 // installed. Every block is inert unless its variable is set, so a normal player boot does nothing
 // here: MENU_OPEN, SCOREBOARD_OPEN and BROWSER_OPEN start a surface visible for screenshots the
-// harness cannot key; TEST_CONNECT_DIRECT, TEST_HOST_LOBBY, TEST_JOIN_LOBBY, TEST_HOST_SAVE and
+// harness cannot key, and MENU_TAB opens the menu on one pane; TEST_CONNECT_DIRECT, TEST_HOST_LOBBY, TEST_JOIN_LOBBY, TEST_HOST_SAVE and
 // TEST_HOST_NEW fire the exact session_manager paths the browser and picker clicks run;
 // TEST_LOADING forces the client connecting state for a deterministic loading-screen shot.
 //
