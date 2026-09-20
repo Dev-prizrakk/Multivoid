@@ -26,6 +26,7 @@
 #include "coop/net/peer_identity.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/player_profile_store.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
@@ -526,6 +527,9 @@ void DriveHostBootIfPending() {
                 b->slot = outSlot;
                 b->created = true;
                 UE_LOGI("harness: host-with-save created + persisted new save '%ls'", b->slot.c_str());
+                // The name was free on disk, which a deleted save's name is too: what its players
+                // left beside it belongs to no world, least of all to this new one.
+                coop::player_profile_store::ForgetSlot(b->slot);
             }
             if (b->slot.empty()) { b->st.store(3); return; }
             const bool inGame = ue_wrap::engine::LoadStorySave(b->slot.c_str());

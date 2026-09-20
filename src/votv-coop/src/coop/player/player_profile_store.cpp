@@ -320,6 +320,19 @@ void Quarantine(const std::string& guid) {
                 "are for recovery", guid.c_str());
 }
 
+size_t ForgetSlot(const std::wstring& slot) {
+    const fs::path dir = SlotDir(slot);
+    size_t removed = 0;
+    std::error_code ec;
+    if (!dir.empty() && fs::is_directory(dir, ec))
+        for (const fs::path& file : ProfileFilesIn(dir))
+            if (fs::remove(file, ec)) ++removed;
+    if (removed)
+        UE_LOGI("player_profile: the save '%ls' is new -- %zu profile file(s) a deleted save of that "
+                "name had left beside it removed", slot.c_str(), removed);
+    return removed;
+}
+
 bool AnythingPending() {
     DropHeldOfAnotherWorld();
     for (const auto& [guid, h] : g_held)

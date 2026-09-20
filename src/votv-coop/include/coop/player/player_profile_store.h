@@ -69,6 +69,12 @@ Found Get(const std::string& guid, std::vector<uint8_t>& outBlob);
 // they are for recovery: a starter kit streamed back must not overwrite them.
 void Quarantine(const std::string& guid);
 
+// A save was just CREATED under `slot`. Its name was free, which the name of a deleted save is as
+// well, and the profile files such a save left behind belong to no world: they are removed, so a
+// returning player is a first joiner of the new world and not the owner of items it never held.
+// Returns how many files went. Pure file work, any thread.
+size_t ForgetSlot(const std::wstring& slot);
+
 // Is any profile held that a gather or a save would have to do something with?
 bool AnythingPending();
 
