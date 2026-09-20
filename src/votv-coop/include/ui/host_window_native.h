@@ -55,6 +55,8 @@ void* NextButton();
 // the rect contains the cursor, so the hit test is by geometry; these exist so that is
 // measured rather than assumed.
 int   SelectedSave();
+// True while the first Next on a save of another game version stands at its warning.
+bool  VersionWarningUp();
 int   SaveRowCount();
 void* SaveListWidget();
 

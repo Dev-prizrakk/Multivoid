@@ -123,6 +123,47 @@ T ReadField(void* obj, int32_t off, T fallback = T{}) {
 // mtime and sorts newest-first. Slot names are never filtered by hand: the mode prefixes come
 // from the game's getSavePrefix.
 
+// lib_C::gameVersion(prefix, suffix) with both empty: the project version, the string the game's
+// slot menu stamps on a new save and compares a loaded one against. The body is pure and never
+// reads __WorldContext, so the CDO is a valid target and `context` only fills the pin. The out
+// FString is minted engine-side and handed to the caller, who owns it. Game thread.
+bool CallGameVersion(void* context, R::FString& out) {
+    out = R::FString{};
+    void* libCdo = R::FindClassDefaultObject(L"lib_C");
+    void* libCls = libCdo ? R::ClassOf(libCdo) : nullptr;
+    // The CXX dump renders GameVersion, the asset dump gameVersion. FindFunction compares
+    // insensitively, so one lookup answers whichever spelling this process interned first.
+    void* verFn = libCls ? R::FindFunction(libCls, L"GameVersion") : nullptr;
+    if (!verFn) return false;
+    ParamFrame f(verFn);
+    f.Set<void*>(L"__WorldContext", context ? context : libCdo);
+    if (!Call(libCdo, f)) return false;
+    return f.GetRaw(L"Version", &out, static_cast<int32_t>(sizeof(out))) && out.Data;
+}
+
+// The running game's version, resolved once per process on the game thread and kept for readers
+// on any thread (GameVersion).
+std::mutex   g_versionMu;
+std::wstring g_gameVersion;
+
+std::wstring ResolveGameVersion() {
+    {
+        std::lock_guard<std::mutex> lk(g_versionMu);
+        if (!g_gameVersion.empty()) return g_gameVersion;
+    }
+    R::FString ver{};
+    if (!CallGameVersion(nullptr, ver)) {
+        UE_LOGW("save_browser: lib_C.gameVersion unresolved -- no save is flagged as a version conflict");
+        return {};
+    }
+    const std::wstring out = FStrToW(ver);
+    R::EngineFree(ver.Data);  // ours: read once, kept as a copy
+    UE_LOGI("save_browser: the running game's version is '%ls'", out.c_str());
+    std::lock_guard<std::mutex> lk(g_versionMu);
+    g_gameVersion = out;
+    return out;
+}
+
 struct ScanItem {
     SaveInfo     base;   // slot/mode/modeLabel/displayName pre-filled (stage A)
     std::wstring path;   // full path to the .sav
@@ -136,6 +177,7 @@ struct SlotCdoDefaults {
     float   health = 0.f;
     float   maxHealth = 0.f;
     std::wstring version;
+    std::wstring gameVersion;  // the running game's, for each row's conflict flag; empty = unresolved
 };
 
 // Resolve <ProjectSavedDir>/SaveGames/ once through the native UFunction, which honors
@@ -196,6 +238,7 @@ bool BuildScanList(std::vector<ScanItem>& items, SlotCdoDefaults& def) {
     def.health     = ReadField<float>(cdo, g_off.health);
     def.maxHealth  = ReadField<float>(cdo, g_off.maxHealth);
     def.version    = FStrToW(ReadField<R::FString>(cdo, g_off.version));
+    def.gameVersion = ResolveGameVersion();
 
     std::error_code ec;
     for (std::filesystem::directory_iterator it{std::filesystem::path(dir), ec}, end;
@@ -279,6 +322,9 @@ void ParseScanList(const std::vector<ScanItem>& items, const SlotCdoDefaults& de
         info.health    = m.hasHealth ? m.health : def.health;
         info.maxHealth = m.hasMaxHealth ? m.maxHealth : def.maxHealth;
         info.version   = m.hasVersion ? m.version : def.version;
+        // The game's compare is FString ==, which ignores case. An unresolved game version flags nothing.
+        info.versionConflict = !def.gameVersion.empty() &&
+                               ::_wcsicmp(info.version.c_str(), def.gameVersion.c_str()) != 0;
         info.lastPlayedTicks = m.hasLastSavedDate ? m.lastSavedDateTicks : 0;
         {
             std::lock_guard<std::mutex> lk(g_metaMu);
@@ -357,33 +403,14 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
     // object's field, so ownership transfers with no copy. A resolve failure still creates the
     // slot; only the badge is wrong.
     ResolveSlotOffsets();
-    do {
-        void* libCdo = R::FindClassDefaultObject(L"lib_C");
-        void* libCls = libCdo ? R::ClassOf(libCdo) : nullptr;
-        // Live-FName case roulette: the CXX dump renders GameVersion, the asset dump
-        // gameVersion. FindFunction compares insensitively (reflection.cpp), so one lookup
-        // answers whichever spelling this process interned first.
-        void* verFn = libCls ? R::FindFunction(libCls, L"GameVersion") : nullptr;
-        if (!verFn || g_off.version < 0) {
-            UE_LOGW("save_browser: CreateNamedSave -- Version stamp unavailable "
-                    "(lib_C.gameVersion=%p VersionOff=%d); creating unversioned",
-                    verFn, g_off.version);
-            break;
-        }
-        // Prefix/Suffix stay zeroed = valid empty FStrings. gameVersion's body is pure --
-        // Concat(prefix, GetProjectVersion(), suffix) -- and never reads __WorldContext, so
-        // the CDO is a valid call target here and the argument is only a placeholder.
-        ParamFrame f(verFn);
-        f.Set<void*>(L"__WorldContext", save);
-        if (!Call(libCdo, f)) {
-            UE_LOGW("save_browser: CreateNamedSave -- gameVersion call failed; creating unversioned");
-            break;
-        }
-        R::FString ver{};
-        f.GetRaw(L"Version", &ver, static_cast<int32_t>(sizeof(ver)));
+    R::FString ver{};
+    if (g_off.version < 0 || !CallGameVersion(save, ver)) {
+        UE_LOGW("save_browser: CreateNamedSave -- Version stamp unavailable (VersionOff=%d); creating unversioned",
+                g_off.version);
+    } else {
         std::memcpy(reinterpret_cast<uint8_t*>(save) + g_off.version, &ver, sizeof(ver));
         UE_LOGI("save_browser: CreateNamedSave -- stamped Version '%ls'", FStrToW(ver).c_str());
-    } while (false);
+    }
 
     // SaveGameToSlot(save, "<prefix><name>", 0) -> writes <slot>.sav NOW (persist at create).
     std::wstring buf = slot;
@@ -473,6 +500,11 @@ uint64_t CopySaves(std::vector<SaveInfo>& out) {
     std::lock_guard<std::mutex> lk(g_mu);
     out = g_cache;
     return g_rev;
+}
+
+std::wstring GameVersion() {
+    std::lock_guard<std::mutex> lk(g_versionMu);
+    return g_gameVersion;
 }
 
 std::string Status() {

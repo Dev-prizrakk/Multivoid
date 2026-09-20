@@ -33,6 +33,8 @@ struct SaveInfo {
     float        health = 0.f; // UsaveSlot_C::health
     float        maxHealth = 0.f;  // UsaveSlot_C::maxHealth
     std::wstring version;      // UsaveSlot_C::Version
+    bool         versionConflict = false;  // Version differs from the running game's (GameVersion):
+                                           // the case the game's own slot menu warns about
     int64_t      lastPlayedTicks = 0;  // UsaveSlot_C::lastDate (FDateTime ticks, 100ns)
 };
 
@@ -81,6 +83,11 @@ void RefreshAsync();
 // Copy the cached save list (render thread). Returns a revision counter that bumps
 // on each COMPLETED scan, so the UI can detect "new data landed".
 uint64_t CopySaves(std::vector<SaveInfo>& out);
+
+// The running game's version as its own slot menu compares it against a save's Version:
+// lib_C::gameVersion with an empty prefix and suffix, which is the project version ("0.9.0").
+// Resolved on the game thread by a scan; empty until one has. Any thread.
+std::wstring GameVersion();
 
 // One-line status for the picker footer ("Scanning..." / "N save(s)" / an error).
 std::string Status();

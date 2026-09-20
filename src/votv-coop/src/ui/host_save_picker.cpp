@@ -42,6 +42,9 @@ std::atomic<bool> g_open{false};
 std::vector<sb::SaveInfo> g_saves;
 int  g_selected = -1;
 char g_newName[64] = "";
+// The save held at the version warning, by slot name (the list re-sorts under an open window).
+// Empty = no warning up.
+std::wstring g_conflictSlot;
 // Lobby host params captured from the server browser on Open().
 std::string g_hostName = "My VOTV Server";
 bool g_hostLocked = false;
@@ -76,6 +79,14 @@ std::string W2A(const std::wstring& w) {
     s.reserve(w.size());
     for (wchar_t c : w) s.push_back(c < 128 ? static_cast<char>(c) : '?');
     return s;
+}
+
+// Hosting a save of another game version stops at a warning first, as the game's own slot menu
+// does ("Conflict version!", the two versions, launch anyways or return).
+void DoHostExisting(const sb::SaveInfo& info);
+void AskOrHostExisting(const sb::SaveInfo& info) {
+    if (info.versionConflict) { g_conflictSlot = info.slot; return; }
+    DoHostExisting(info);
 }
 
 void DoHostExisting(const sb::SaveInfo& info) {
@@ -128,6 +139,7 @@ void Open(const std::string& hostName, bool locked, int playersMax) {
     g_hostLocked = locked;
     g_hostMax = playersMax > 0 ? playersMax : 4;
     g_selected = -1;
+    g_conflictSlot.clear();
     // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which
     // takes a global mutex and OPENS AND LINE-SCANS multivoid.ini -- and `Render()` is
     // an ImGui draw, so reading it there is file I/O every frame the window is up. The
@@ -189,12 +201,15 @@ void Render() {
                                       ImGuiSelectableFlags_SpanAllColumns |
                                       ImGuiSelectableFlags_AllowDoubleClick)) {
                     g_selected = i;
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) DoHostExisting(s);
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) AskOrHostExisting(s);
                 }
                 ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(W2A(s.modeLabel).c_str());
                 ImGui::TableSetColumnIndex(2); ImGui::Text("%d", s.day);
                 ImGui::TableSetColumnIndex(3); ImGui::Text("%.0f/%.0f", s.health, s.maxHealth);
-                ImGui::TableSetColumnIndex(4); ImGui::TextDisabled("%s", W2A(s.version).c_str());
+                ImGui::TableSetColumnIndex(4);
+                if (s.versionConflict) ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s",
+                                                          s.version.empty() ? "unk!" : W2A(s.version).c_str());
+                else                   ImGui::TextDisabled("%s", W2A(s.version).c_str());
 
                 ImGui::PopID();
             }
@@ -252,13 +267,44 @@ void Render() {
         const bool hasSel = g_selected >= 0 && g_selected < static_cast<int>(g_saves.size());
         if (!hasSel) ImGui::BeginDisabled();
         if (ImGui::Button("Host selected save", ImVec2(S(170.0f), 0.0f)) && hasSel)
-            DoHostExisting(g_saves[g_selected]);
+            AskOrHostExisting(g_saves[g_selected]);
         if (!hasSel) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(S(90.0f), 0.0f))) open = false;
         ImGui::SameLine(0.0f, S(18.0f));
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.00f, 1.0f), "Lobby: %s%s  (max %d)",
                            g_hostName.c_str(), g_hostLocked ? "  [locked]" : "", g_hostMax);
+
+        // The version warning, over the picker.
+        if (!g_conflictSlot.empty()) {
+            const sb::SaveInfo* held = nullptr;
+            for (const sb::SaveInfo& s : g_saves) if (s.slot == g_conflictSlot) held = &s;
+            if (!held) g_conflictSlot.clear();  // the save went away under the warning
+            else {
+                ImGui::OpenPopup("Conflict version!###coop_save_conflict");
+                ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                        ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                if (ImGui::BeginPopupModal("Conflict version!###coop_save_conflict", nullptr,
+                                           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                    ImGui::Text("This save was made in another version of the game.");
+                    ImGui::Text("Save: %s", held->version.empty() ? "unknown" : W2A(held->version).c_str());
+                    ImGui::Text("Game: %s", W2A(sb::GameVersion()).c_str());
+                    ImGui::Spacing();
+                    const sb::SaveInfo launch = *held;  // DoHostExisting closes the picker
+                    if (ImGui::Button("Launch anyways", ImVec2(S(150.0f), 0.0f))) {
+                        g_conflictSlot.clear();
+                        ImGui::CloseCurrentPopup();
+                        DoHostExisting(launch);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Return", ImVec2(S(100.0f), 0.0f))) {
+                        g_conflictSlot.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        }
     }
     ImGui::End();
 

@@ -66,6 +66,7 @@ const FLinearColor kText   = NS::Text();
 const FLinearColor kAccent = NS::Accent();
 const FLinearColor kHover  = NS::Hover();
 const FLinearColor kDim    = NS::Dim();
+const FLinearColor kBad    = NS::Bad();
 
 // The connection modes, the product wording fixed once; each line says what the choice costs the
 // player.
@@ -113,6 +114,12 @@ int     g_buildAttempts = 0;
 // different world, and a wrong slot is a wrong save. The browser keys on lobbyId for the same
 // reason.
 std::wstring g_selectedSlot;
+// The save whose version conflict the player has been warned about: a second Next on the same
+// save launches it anyways, as the game's own slot menu offers. Choosing anything else drops it.
+// The warning's text goes to the status line through that line's one writer (OnMenuTick), where it
+// takes the place of the host status while it stands.
+std::wstring g_conflictWarnedSlot;
+std::string  g_conflictLine;
 int  g_connMode     = 0;
 int  g_hoverRow     = -2;   // -2 = nothing hovered; -1 = the New Game row; >=0 = a save
 int  g_hoverConn    = -1;
@@ -215,7 +222,7 @@ void SetText(void* block, const std::wstring& t, const FLinearColor& col) {
 // A runtime repaint, so every write dispatches: the raw variants write a property UMG already
 // baked into the Slate widget at attach and change nothing on screen (this window's hover
 // highlight never drew that way); Raw is correct at build time only.
-void PaintRow(const Row& r, bool selected, bool hovered) {
+void PaintRow(const Row& r, bool selected, bool hovered, bool versionConflict = false) {
     if (!r.bg) return;
     U::SetImageTint(r.bg, selected ? kRowSel : kRowBg);
     // Hover is a text colour and selection a fill, two channels applied independently.
@@ -223,14 +230,17 @@ void PaintRow(const Row& r, bool selected, bool hovered) {
     const FLinearColor sub  = hovered ? kHover : kDim;
     E::SetTextBlockColorDispatch(r.a, main);
     E::SetTextBlockColorDispatch(r.b, sub);
-    E::SetTextBlockColorDispatch(r.c, sub);
+    // The last column carries the save's version when it is not the running game's, in the game's
+    // own out-of-date red; hover does not repaint a warning.
+    E::SetTextBlockColorDispatch(r.c, versionConflict ? kBad : sub);
 }
 
 void RepaintAll() {
     PaintRow(g_newGameRow, g_selectedSlot.empty(), g_hoverRow == -1);
     for (size_t i = 0; i < g_saveRows.size(); ++i)
         PaintRow(g_saveRows[i], SlotIndex() == static_cast<int>(i),
-                 g_hoverRow == static_cast<int>(i));
+                 g_hoverRow == static_cast<int>(i),
+                 i < g_saves.size() && g_saves[i].versionConflict);
     for (int i = 0; i < kConnCount; ++i) {
         if (!g_connRow[i]) continue;
         U::SetImageTint(g_connRow[i], g_connMode == i ? kRowSel : kRowBg);
@@ -238,7 +248,11 @@ void RepaintAll() {
     }
 }
 
-void SetStatus(const std::wstring& t) { SetText(g_status, t, kText); }
+// Choosing another world answers a version warning with "return": the warning and its line go.
+void DropConflictWarning() {
+    g_conflictWarnedSlot.clear();
+    g_conflictLine.clear();
+}
 
 }  // namespace
 
@@ -356,7 +370,10 @@ void SyncSaves() {
         const sb::SaveInfo& s = g_saves[static_cast<size_t>(i)];
         SetText(g_saveRows[i].a, s.displayName.empty() ? s.slot : s.displayName, kText);
         SetText(g_saveRows[i].b, s.modeLabel, kDim);
-        SetText(g_saveRows[i].c, L"day " + std::to_wstring(s.day), kDim);
+        // A save of another game version says so in its row, before the player commits to it.
+        const std::wstring day = L"day " + std::to_wstring(s.day);
+        if (s.versionConflict) SetText(g_saveRows[i].c, day + L"   " + (s.version.empty() ? L"unk!" : s.version), kBad);
+        else                   SetText(g_saveRows[i].c, day, kDim);
     }
     // Nothing to repair: the selection is a slot name, so a re-sort, a shrink and a rescan leave it
     // on the same world, or on none if that save is gone.
@@ -405,9 +422,26 @@ void DoNext() {
         c.nameIsDerived = true;
         c.mode    = 0;   // enum_gamemode story
     } else {
+        const sb::SaveInfo& save = g_saves[static_cast<size_t>(sel)];
+        // The game's own slot menu stops on a save of another version with "Conflict version!", the
+        // two versions, and the choice to launch anyways or return. Here the first Next is the stop
+        // and says so; a second Next on the same save is "launch anyways", and choosing any other
+        // world is "return".
+        if (save.versionConflict && g_conflictWarnedSlot != save.slot) {
+            g_conflictWarnedSlot = save.slot;
+            // Short on purpose: the footer's middle cell holds about sixty characters at this size,
+            // and a longer line is clipped at both ends.
+            g_conflictLine = "Conflict version! " +
+                             (save.version.empty() ? std::string("unknown") : Narrow(save.version)) +
+                             ", game " + Narrow(sb::GameVersion()) + ". Next again to launch.";
+            UE_LOGI("host_window_native: NEXT held -- save '%ls' is version '%ls', the game is '%ls'",
+                    save.slot.c_str(), save.version.c_str(), sb::GameVersion().c_str());
+            return;
+        }
         c.newGame = false;
-        c.slot    = Narrow(g_saves[static_cast<size_t>(sel)].slot);
+        c.slot    = Narrow(save.slot);
     }
+    DropConflictWarning();
     // The name, derived rather than typed: the browser lists servers by name and "<nick>'s game"
     // tells another player who is hosting. Resolved at the moment the player commits to a world, so
     // the two halves of one decision travel together.
@@ -442,7 +476,7 @@ void PollChrome() {
     for (int i = 0; i < kConnCount; ++i)
         if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_connMode = i; RepaintAll(); return; }
     if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) {
-        g_selectedSlot.clear(); RepaintAll(); return;
+        g_selectedSlot.clear(); DropConflictWarning(); RepaintAll(); return;
     }
     // The row under the cursor is known from the hover pass (geometry, for the reason recorded
     // there); re-deriving it here would be a second implementation that could disagree. Bounded by
@@ -450,6 +484,7 @@ void PollChrome() {
     // nothing, so this branch is not the fall-through for every click that hits no control.
     if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_saves.size())) {
         g_selectedSlot = g_saves[static_cast<size_t>(g_hoverRow)].slot;
+        if (g_selectedSlot != g_conflictWarnedSlot) DropConflictWarning();
         RepaintAll();
         return;
     }
@@ -482,6 +517,7 @@ void Show() {
     BecameLive();
     sb::RefreshAsync();          // the list is stale by definition between openings
     SyncSaves();
+    DropConflictWarning();       // a warning belongs to one opening
     // The status is written by the one edge-gated writer in OnMenuTick, on this same tick; a second
     // writer here needed a second cache, and two caches for one widget is what once left the line
     // permanently blank.
@@ -532,6 +568,7 @@ bool IsOpen() { return g_shown; }
 
 void* BackButton() { return g_backBtn; }
 void* NextButton() { return g_hostBtn; }
+bool  VersionWarningUp() { return !g_conflictLine.empty(); }
 
 int   SelectedSave()   { return SlotIndex(); }
 int   SaveRowCount()   { return g_visibleSaves; }   // shown, not the row vector's high-water mark
@@ -631,8 +668,10 @@ void OnMenuTick(void* menu, void* switcher) {
         // lifetime while g_status is rebuilt empty on every menu instance, a status rendered on one
         // menu left the line blank on the next until the status happened to change, and the reason
         // a session died was gone after a quit and a reopen.
-        std::string cur = sm::HostStatus();
-        if (cur != g_lastStatus) { g_lastStatus = cur; SetStatus(Widen(cur)); }
+        // A standing version warning takes the line, in the game's out-of-date red.
+        const bool warning = !g_conflictLine.empty();
+        std::string cur = warning ? g_conflictLine : sm::HostStatus();
+        if (cur != g_lastStatus) { g_lastStatus = cur; SetText(g_status, Widen(cur), warning ? kBad : kText); }
     }
 }
 
