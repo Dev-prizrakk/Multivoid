@@ -6,7 +6,10 @@
 #include "coop/dev/director/director.h"
 #include "record_digest.h"   // co-located private header (src tree, not include/)
 #include "coop/player/players_registry.h"
+#include "coop/net/session.h"
 #include "coop/player/roster.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/net_pump.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
@@ -33,7 +36,13 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-constexpr int kSettleTicks = 2400;  // ~40 s at the pump's ~60 Hz: the join replay has drained by then
+// The drill waits on readiness, not on a clock. A CLIENT acts once its join is over: it has announced
+// world-ready and the join cover is down, which is when the host's snapshot has been applied (a
+// measured run sat 39 s past that point on the old fixed wait). The HOST seeds once its own player
+// stands and the save's objects have had time to spawn; in a rig run that is before the client's
+// join capture, so the seeded drive and disc are in the world the joiner is handed.
+constexpr int kClientSettleTicks = 120;  // ~2 s past the join's end, at the pump's ~60 Hz
+constexpr int kHostSettleTicks   = 600;  // ~10 s past the host's player standing
 constexpr float kDrillFood = 37.f, kDrillSleep = 61.f;
 constexpr int kMaxTries    = 8;     // per wanted kind: a full inventory refuses everything, so never one dispatch per prop in the world
 
@@ -68,6 +77,7 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
     for (int waited = 0; picked->load() == 0 && waited < 4000; waited += 5) ::Sleep(5);
     if (picked->load() != 1) {
         UE_LOGW("[INV-PICKUP-DRILL] no route of 8 m or more from here -- the player stays put");
+        UE_LOGI("[INV-PICKUP-DRILL] CLIENT LIFE DONE (no walk)");
         return 0;
     }
     goal->reachCm = 200.f;
@@ -81,6 +91,9 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
         UE_LOGI("[INV-PICKUP-DRILL] walked (%hs) -- the player now stands at (%.0f, %.0f, %.0f) yaw=%.0f",
                 goal->reached ? "reached" : goal->failReason, at.X, at.Y, at.Z,
                 E::GetActorRotation(player).Yaw);
+        // Everything this life set out to do is done; the profile that says so reaches the host on
+        // the lane's next poll. A rig waits on this line, not on a number of seconds.
+        UE_LOGI("[INV-PICKUP-DRILL] CLIENT LIFE DONE");
     });
     return 0;
 }
@@ -88,21 +101,27 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
 void PocketTheWants(void* player);
 void HostSeedTheWants(void* player);
 void KeyCensus(bool first);
-void HostSaveTick();
+void HostSaveTick(coop::net::Session& session);
 void ClientWriteGateProbe();
 
 }  // namespace
 
-void Tick() {
+void Tick(coop::net::Session* session) {
     static const bool s_on = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL") == "1";
-    if (!s_on) return;
+    if (!s_on || !session) return;
     static bool s_done = false;
-    if (s_done) { KeyCensus(false); HostSaveTick(); return; }
+    if (s_done) { KeyCensus(false); HostSaveTick(*session); return; }
 
     void* player = coop::players::Registry::Get().Local();
     if (!player || !R::IsLive(player) || !E::GetController(player)) return;
     static int s_ticks = 0;
-    if (++s_ticks < kSettleTicks) return;
+    const bool host = coop::roster::LocalIsHost();
+    if (!host && (!coop::net_pump::HasAnnouncedWorldReady() ||
+                  coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)) {
+        s_ticks = 0;  // the join is not over: the settle counts from its end
+        return;
+    }
+    if (++s_ticks < (host ? kHostSettleTicks : kClientSettleTicks)) return;
     s_done = true;
     KeyCensus(true);  // what stands in the world BEFORE this peer acts
 
@@ -323,23 +342,32 @@ void PocketTheWants(void* player) {
 }
 
 // HOST, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: save the world through the game's own
-// saveSlot_C::save, once a minute, six times. The host writes each player's profile to disk only
-// with its own world save, and a rig host never saves by itself, so without this the cut is never
-// exercised. `1` writes the slot the host loaded every time. `quick` alternates the player's
-// quicksave, which writes the live world to a NEW <slot>_SUB_<n> file, with the pause menu's plain
-// save, which writes the main slot: the two name different files from one world, which is what a
-// profile set that follows the written slot has to be seen doing. tools/mp.py puts the loaded slot
-// and its profile files back after the run and reports the subsaves a run made.
-constexpr int kSaveTicks = 3600;  // ~1 min at the pump's ~60 Hz
-constexpr int kSaveRuns  = 6;
+// saveSlot_C::save, when a joiner's world comes up. The host writes each player's profile to disk
+// only with its own world save, and a rig host never saves by itself, so without this the cut is
+// never exercised. The moment is a joiner's arrival and not a minute counter, because that is when
+// there is something to see: the join capture just gathered the world and set the profiles aside,
+// so the save after a REJOIN is the one that cuts what the first life left. `1` writes the slot the
+// host loaded, once per arrival. `quick` writes twice per arrival: the player's quicksave, which
+// puts the live world in a NEW <slot>_SUB_<n> file, then the pause menu's plain save, which writes
+// the main slot -- two files from one world, which is what a profile set that follows the written
+// slot has to be seen doing. tools/mp.py puts the loaded slot and its profile files back after the
+// run and reports the subsaves a run made.
+constexpr int kSaveGapTicks = 300;  // ~5 s at the pump's ~60 Hz: after the arrival, and between the two
+constexpr int kSaveRuns     = 6;
 
-void HostSaveTick() {
+void HostSaveTick(coop::net::Session& session) {
     static const std::string s_mode = ::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE");
     static const bool s_on = s_mode == "1" || s_mode == "quick";
     if (!s_on || !coop::roster::LocalIsHost()) return;
-    static int s_ticks = 0, s_runs = 0;
-    if (s_runs >= kSaveRuns || ++s_ticks < kSaveTicks) return;
-    s_ticks = 0;
+    static bool s_wasReady = false;
+    static int s_left = 0, s_due = 0, s_runs = 0;
+    const bool ready = session.AnyWorldReadyPeer();
+    if (ready && !s_wasReady) { s_left = s_mode == "quick" ? 2 : 1; s_due = kSaveGapTicks; }
+    s_wasReady = ready;
+    if (s_left == 0 || s_runs >= kSaveRuns || --s_due > 0) return;
+    s_due = kSaveGapTicks;
+    const bool firstOfArrival = s_left == 2;
+    --s_left;
     ++s_runs;
     void* slot = ue_wrap::inventory::ResolveSaveSlot();
     void* fn = slot ? R::FindFunction(R::ClassOf(slot), L"save") : nullptr;
@@ -349,7 +377,7 @@ void HostSaveTick() {
     }
     // saveToSlot, quicksave first: (true, *) -> a new subsave; (false, true) -> the loaded slot as
     // named; (false, false) -> the main slot, also when a subsave is what was loaded.
-    const bool quick = s_mode == "quick" && (s_runs & 1);
+    const bool quick = s_mode == "quick" && firstOfArrival;
     const bool plain = s_mode == "quick" && !quick;
     ue_wrap::ParamFrame f(fn);
     f.Set(L"quicksave", quick);
@@ -359,6 +387,7 @@ void HostSaveTick() {
     UE_LOGI("[INV-PICKUP-DRILL] HOST save #%d through saveSlot_C::save (%hs) -> %hs", s_runs,
             quick ? "quicksave: a new subsave" : plain ? "plain: the main slot" : "the loaded slot",
             called ? "called" : "CALL FAILED");
+    if (s_left == 0) UE_LOGI("[INV-PICKUP-DRILL] HOST SAVES DONE for this arrival (%d so far)", s_runs);
 }
 
 // CLIENT, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: ask the engine to write this world's save

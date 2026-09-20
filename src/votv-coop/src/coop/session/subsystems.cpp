@@ -618,7 +618,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // the client's profile stream / the host's on-join push (+ the inventory_selftest=1 read-verify)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) by content (no-op unless live_store_readout=1)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(&session); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
     // The trash pile collect-counter poll and depletion death-watch; a chipPile re-grab fires from
     // the use-press observer that trash_collect_sync installs, not from a per-tick liveness sweep.
     { PP::Scope _s{PP::Bucket::TrashWatch};
