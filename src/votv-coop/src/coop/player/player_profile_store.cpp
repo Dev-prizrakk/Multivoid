@@ -38,10 +38,14 @@ struct Held {
 std::unordered_map<std::string, Held> g_held;
 std::unordered_set<std::string> g_quarantined;  // stored profile unreadable: never written over
 
-// What is held belongs to ONE loaded world. A process that loads a world to host it names the slot
-// once per load (save_transfer::SetHostSlot), so a new serial means a new world was loaded from its
-// save -- and that world is as old as the save, so the profiles to go with it are the files', not
-// the ones held from the world before.
+// The slot whose directory holds this world's profile set on disk: the slot the world was loaded
+// from, then whichever slot a save of it was last written to. Empty while the world has no file.
+std::wstring g_setSlot;
+
+// What is held belongs to ONE loaded world. A process names the slot once per world it loads
+// (save_transfer::SetHostSlot), so a new serial means another world took this one's place -- and
+// that world is as old as its save, so the profiles to go with it are the files', not the ones
+// held from the world before.
 uint32_t g_heldForSerial = 0;
 void DropHeldOfAnotherWorld() {
     const uint32_t serial = coop::save_transfer::HostSlotSerial();
@@ -51,20 +55,51 @@ void DropHeldOfAnotherWorld() {
                 "previous one dropped", g_held.size());
     g_held.clear();
     g_quarantined.clear();
+    g_setSlot = coop::save_transfer::HostSlot();
     g_heldForSerial = serial;
 }
 
-// Build <gameDir>/coop_players/<hostSlot>/<guid>.json, empty if any piece is missing.
+// <gameDir>/coop_players/<slot>, empty if a piece is missing. The slot name is the game's and
+// becomes ONE path component, so a name that could be more than one is refused.
+fs::path SlotDir(const std::wstring& slot) {
+    if (slot.empty() || slot == L"." || slot == L".." ||
+        slot.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos)
+        return {};
+    const std::wstring base = ue_wrap::paths::ExeDir();
+    if (base.empty()) return {};
+    return fs::path(base) / L"coop_players" / slot;
+}
+
+// <gameDir>/coop_players/<the set's slot>/<guid>.json, empty if any piece is missing.
 fs::path PlayerFilePath(const std::string& guid) {
     // Defence in depth (the wire boundary already validates): a GUID that is not exactly 32 hex
     // characters never becomes a path component; an empty path makes every write no-op, so a
     // non-hex GUID cannot traverse.
     if (!coop::player_handshake::IsValidGuid(guid)) return {};
-    const std::wstring base = ue_wrap::paths::ExeDir();
-    if (base.empty()) return {};
-    const std::wstring slot = coop::save_transfer::HostSlot();
-    if (slot.empty()) return {};
-    return fs::path(base) / L"coop_players" / slot / (std::wstring(guid.begin(), guid.end()) + L".json");
+    const fs::path dir = SlotDir(g_setSlot);
+    if (dir.empty()) return {};
+    return dir / (std::wstring(guid.begin(), guid.end()) + L".json");
+}
+
+// Is this one of the set's files: <32 hex>.json, or the .bak of one?
+bool IsProfileFile(const fs::path& file) {
+    std::wstring name = file.filename().wstring();
+    if (name.size() > 4 && name.compare(name.size() - 4, 4, L".bak") == 0) name.resize(name.size() - 4);
+    if (name.size() != 32 + 5 || name.compare(32, 5, L".json") != 0) return false;
+    std::string guid;
+    for (size_t i = 0; i < 32; ++i) {
+        if (name[i] > 0x7F) return false;
+        guid.push_back(static_cast<char>(name[i]));
+    }
+    return coop::player_handshake::IsValidGuid(guid);
+}
+
+std::vector<fs::path> ProfileFilesIn(const fs::path& dir) {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec) && IsProfileFile(it->path())) out.push_back(it->path());
+    return out;
 }
 
 std::string Hex(const std::vector<uint8_t>& b) {
@@ -189,6 +224,53 @@ bool WriteFile(const std::string& guid, const std::vector<uint8_t>& blob, const 
     return true;
 }
 
+// A save of this world was written to `written`, which is not where the set stands: a quicksave
+// names a new <main>_SUB_<n> file, and a plain save made after loading a subsave names the main
+// slot (saveSlot_C::saveToSlot). That file now holds THIS world, so the directory beside it has to
+// hold this world's set and nothing else: what stood there belonged to the world the file held
+// before, and a player of that world would come back carrying items this one still has on the
+// floor. The set is copied byte for byte -- a file that does not read stays as it is there too --
+// and stands under `written` from then on. False leaves everything as it was for the next save.
+bool FollowWrittenSlot(const std::wstring& written) {
+    if (written == g_setSlot) return true;
+    const fs::path to = SlotDir(written);
+    std::error_code ec;
+    if (!to.empty()) fs::create_directories(to, ec);
+    if (to.empty() || ec) {
+        UE_LOGW("player_profile: the profile directory of the slot '%ls' could not be made (%s) -- "
+                "nothing cut, everything stays for the next save", written.c_str(),
+                to.empty() ? "not a name for one directory, or no game directory" : ec.message().c_str());
+        return false;
+    }
+    const fs::path from = SlotDir(g_setSlot);
+    const bool haveFrom = !from.empty() && fs::is_directory(from, ec);
+    if (haveFrom && fs::equivalent(from, to, ec)) {  // one directory under two spellings
+        g_setSlot = written;
+        return true;
+    }
+    size_t removed = 0, copied = 0;
+    for (const fs::path& stale : ProfileFilesIn(to)) {
+        if (haveFrom && fs::exists(from / stale.filename(), ec)) continue;  // copied over below
+        if (fs::remove(stale, ec)) ++removed;
+    }
+    if (haveFrom)
+        for (const fs::path& file : ProfileFilesIn(from)) {
+            fs::copy_file(file, to / file.filename(), fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                UE_LOGE("player_profile: copying '%ls' beside the slot '%ls' failed (%s) -- nothing "
+                        "cut, everything stays for the next save", file.c_str(), written.c_str(),
+                        ec.message().c_str());
+                return false;
+            }
+            ++copied;
+        }
+    UE_LOGI("player_profile: the world was saved to '%ls', its profiles stood under '%ls' -- %zu "
+            "file(s) of the set copied beside the new file, %zu left by the world that slot held "
+            "before removed", written.c_str(), g_setSlot.c_str(), copied, removed);
+    g_setSlot = written;
+    return true;
+}
+
 }  // namespace
 
 // Encoding is the codec's job; escaping is this site's, because the container is JSON. Raw UTF-8
@@ -256,21 +338,22 @@ void MarkWorldGathered() {
     }
 }
 
-size_t CutToDisk() {
+size_t CutToDisk(const std::wstring& writtenSlot) {
     DropHeldOfAnotherWorld();
+    if (!FollowWrittenSlot(writtenSlot)) return 0;
     size_t written = 0;
     bool dirReady = false;
     for (auto it = g_held.begin(); it != g_held.end();) {
         Held& h = it->second;
         if (h.uncut) {
             if (!dirReady) {  // one directory for every profile of this world
-                const fs::path dir = PlayerFilePath(it->first).parent_path();
+                const fs::path dir = SlotDir(g_setSlot);
                 std::error_code ec;
                 if (!dir.empty()) fs::create_directories(dir, ec);
                 if (dir.empty() || ec) {
                     UE_LOGW("player_profile: the profile directory could not be made (%s) -- "
                             "nothing cut, everything stays for the next save",
-                            dir.empty() ? "no host slot or game directory" : ec.message().c_str());
+                            dir.empty() ? "no game directory" : ec.message().c_str());
                     return 0;
                 }
                 dirReady = true;

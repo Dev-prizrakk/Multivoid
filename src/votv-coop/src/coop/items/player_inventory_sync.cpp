@@ -287,7 +287,7 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
     }
     g_gatherSeen = false;
     const Clock::time_point t0 = Clock::now();
-    const size_t n = coop::player_profile_store::CutToDisk();
+    const size_t n = coop::player_profile_store::CutToDisk(slotName);
     UE_LOGI("player_inventory: the host's world was saved to '%ls' -- %zu changed profile(s) cut to "
             "disk with it in %lld us", slotName, n, static_cast<long long>(
                 std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count()));

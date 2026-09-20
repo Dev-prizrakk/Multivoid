@@ -228,9 +228,11 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
         });
         while (st->load() == 0) ::Sleep(5);
         if (st->load() == 2) {
-            // A non-fresh, non-override load is the slot this process would serve if it hosts; the
-            // picker sets its own, and the coop override is a client load that never serves.
-            if (!freshBoot && !slotOverride) coop::save_transfer::SetHostSlot(slot);
+            // The world this process would serve if it hosts: the slot it loaded, or no slot for
+            // a New Game, which has no file yet -- named all the same, because what is kept per
+            // loaded world has to learn that another one took its place. The picker sets its own,
+            // and the coop override is a client load that never serves.
+            if (!slotOverride) coop::save_transfer::SetHostSlot(freshBoot ? std::wstring() : slot);
             return true;
         }
         ::Sleep(1500);

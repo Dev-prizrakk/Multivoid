@@ -39,8 +39,9 @@ void Install(coop::net::Session* session);
 
 // Host side, game thread.
 
-// The slot name the host's world was loaded from (harness boot or the host picker set it).
-// The transfer reads the slot's .sav under the save directory fresh per request.
+// The slot name the host's world was loaded from (harness boot or the host picker set it), empty
+// for a New Game that has no file yet. The transfer reads the slot's .sav under the save directory
+// fresh per request.
 void SetHostSlot(const std::wstring& slot);
 
 // The host slot name; the per-player inventory keys its per-save directory on it. Empty until
