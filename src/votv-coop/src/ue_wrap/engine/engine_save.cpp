@@ -252,6 +252,30 @@ void PutSaveRulesInForce(void* gi, void* save, const char* who) {
     sLastSave = save;
 }
 
+// The save's day handed to the gamemode, the other thing the game's slot menu does on its way into
+// a world: mainGameInstance.startDay = saveSlot.savedtime.Z. The gamemode reads it once on its
+// BeginPlay, marks every scheduled event dated before that day as passed WITHOUT running it, sets
+// its clock's day, and zeroes the field. With the field left at 0 that block does not run, and an
+// event dated before the save's day that is missing from its passed list stays armed.
+// Re-asserted on every poll (the boots stop polling once the world is loading, before BeginPlay).
+void PutSaveStartDayInForce(void* gi, void* save, const char* who) {
+    static void* sLastSave = nullptr;
+    void* giClass = R::ClassOf(gi);
+    void* saveClass = (save && R::IsLive(save)) ? R::ClassOf(save) : nullptr;
+    const int32_t dayOff = giClass ? R::FindPropertyOffset(giClass, L"startDay") : -1;
+    const int32_t timeOff = saveClass ? R::FindPropertyOffset(saveClass, L"savedtime") : -1;
+    if (dayOff < 0 || timeOff < 0) {
+        if (save != sLastSave) UE_LOGW("engine: %s -- startDay / savedtime unresolved; the save's day was not handed over", who);
+        sLastSave = save;
+        return;
+    }
+    // savedtime is an FIntVector; Z is the day.
+    const int32_t day = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(save) + timeOff + 8);
+    *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(gi) + dayOff) = day;
+    if (save != sLastSave) UE_LOGI("engine: %s -- the save's day %d handed to the gamemode (startDay)", who, day);
+    sLastSave = save;
+}
+
 }  // namespace
 
 bool GetSavePrefix(uint8_t mode, std::wstring& out) {
@@ -349,6 +373,7 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
         UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
     }
     PutSaveRulesInForce(gi, g_storySave, "LoadStorySave");
+    PutSaveStartDayInForce(gi, g_storySave, "LoadStorySave");
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
 
     // The game mode from the slot prefix before the travel, retried each poll until the widget is
@@ -452,6 +477,7 @@ bool StartFreshGame(bool storyMode) {
         UE_LOGW("engine: StartFreshGame -- setSaveSlotObject unresolved");
     }
     PutSaveRulesInForce(gi, g_storySave, "StartFreshGame");
+    PutSaveStartDayInForce(gi, g_storySave, "StartFreshGame");
     // A blank save has empty object and trigger arrays, so restoring it yields the level defaults
     // through the same load path as a real save.
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
