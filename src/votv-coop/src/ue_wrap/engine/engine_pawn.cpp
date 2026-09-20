@@ -85,22 +85,27 @@ void* GetController(void* pawn) {
 
 void SetControlRotation(void* controller, const FRotator& rot) {
     if (!controller) return;
-    // Call K2_SetControlRotation via reflection rather than writing the field: the UFunction's body
-    // runs ProcessViewRotation + UpdateRotation as well as the assignment, which a direct write
-    // skips. Lazy resolve on first call (PlayerController is loaded by engine boot, well before any
-    // puppet controller is wired). Falls back to the direct write only if resolution fails, which a
-    // working build should never reach.
-    if (!g_controllerClass) g_controllerClass = R::FindClass(P::name::ControllerClassName);
-    if (g_controllerClass && !g_setControlRotFn)
-        g_setControlRotFn = R::FindFunction(g_controllerClass, P::name::SetControlRotationFn);
+    // The engine's setter through reflection rather than a write to the field: it is what the
+    // game's own blueprints call. Resolved on the first call (Controller loads with the engine,
+    // well before any controller reaches here) and asked for once: a name that does not resolve
+    // will not resolve on the next call either, and the miss is said once, as an error, because a
+    // per-call warning about it went unread for as long as the name was wrong.
+    static bool s_asked = false;
+    if (!s_asked) {
+        s_asked = true;
+        if (!g_controllerClass) g_controllerClass = R::FindClass(P::name::ControllerClassName);
+        if (g_controllerClass)
+            g_setControlRotFn = R::FindFunction(g_controllerClass, P::name::SetControlRotationFn);
+        if (!g_setControlRotFn)
+            UE_LOGE("engine_pawn: Controller::%ls did not resolve -- every SetControlRotation of "
+                    "this process writes the field directly", P::name::SetControlRotationFn);
+    }
     if (g_setControlRotFn) {
         ParamFrame f(g_setControlRotFn);
         f.Set<FRotator>(L"NewRotation", rot);
         Call(controller, f);
         return;
     }
-    UE_LOGW("engine_pawn: SetControlRotation falling back to direct write "
-            "(K2_SetControlRotation unresolved)");
     *reinterpret_cast<FRotator*>(reinterpret_cast<uint8_t*>(controller)
                                  + P::off::AController_ControlRotation) = rot;
 }

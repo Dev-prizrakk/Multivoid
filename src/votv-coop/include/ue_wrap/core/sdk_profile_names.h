@@ -271,9 +271,10 @@ inline constexpr const wchar_t* AnimBPKerfurRegularClass = L"AnimBlueprint_kerfu
 inline constexpr const wchar_t* CameraActorClass = L"CameraActor";
 inline constexpr const wchar_t* ControllerClassName = L"Controller";
 inline constexpr const wchar_t* GetControlRotationFn = L"GetControlRotation";
-// The BlueprintCallable setter, not a direct field write: K2_SetControlRotation also runs
-// ProcessViewRotation and UpdateRotation, and skipping them jitters the view per tick.
-inline constexpr const wchar_t* SetControlRotationFn = L"K2_SetControlRotation";
+// The engine's own setter, the one the game's blueprints call (mainPlayer's bytecode:
+// EX_VirtualFunction SetControlRotation). It carries no K2_ prefix: under that name it never
+// resolved, and every caller took the direct field write.
+inline constexpr const wchar_t* SetControlRotationFn = L"SetControlRotation";
 inline constexpr const wchar_t* PlayerControllerClassName = L"PlayerController";
 // APlayerController::ProjectWorldLocationToScreen(FVector, FVector2D&, bool
 // bPlayerViewportRelative) -> bool: the world-to-viewport projection of the screen-space nameplates
