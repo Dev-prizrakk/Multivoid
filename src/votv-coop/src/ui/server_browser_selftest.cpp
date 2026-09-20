@@ -137,6 +137,7 @@ constexpr int kSessNextDown   = 350;
 constexpr int kSessNextUp     = 354;
 constexpr int kSessVerify     = 362;
 constexpr int kSessShotHold   = 363;
+constexpr int kSessWarnHold   = 364;   // the version warning, held for the eye; then Next again
 constexpr int kSessLockMove   = 370;
 constexpr int kSessLockDown   = 376;
 constexpr int kSessLockUp     = 380;
@@ -1066,6 +1067,18 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // were still showing, its Back would restore an index that is now ours.
             const bool up   = ui::host_session_settings::IsOpen();
             const bool gone = !ui::host_window_native::IsOpen();
+            // The selected save is of another game version: the first Next must stop at the warning
+            // and open nothing, and the second must go through. Seen once, then Next is pressed again.
+            static bool sWarned = false;
+            if (!up && !sWarned && ui::host_window_native::VersionWarningUp()) {
+                sWarned = true;
+                UE_LOGW("host_window_native: VERSION WARNING PASS -- a real click on Next with a save "
+                        "of another game version selected opened nothing and raised the warning; "
+                        "pressing Next again");
+                g_holdUntilMs = nowMs + kShotHoldMs;
+                g_selfCheckStep = kSessWarnHold;   // set, not "minus one": the step before it is a hold too
+                return;
+            }
             if (up && gone)
                 UE_LOGW("host_session_settings: SESSION PASS -- a real click on Next opened "
                         "the session-settings window and closed the hosting one. The two-step "
@@ -1080,7 +1093,13 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         }
         case kSessShotHold:
             if (nowMs < g_holdUntilMs) return;
-            break;
+            // Past the warning hold below: that state sits between this one and the lock phases.
+            g_selfCheckStep = kSessLockMove - 1;
+            return;
+        case kSessWarnHold:
+            if (nowMs < g_holdUntilMs) return;
+            g_selfCheckStep = kSessNextMove - 1;   // the second Next: "launch anyways"
+            return;
         case kSessLockMove: {
             void* row = ui::host_session_settings::LockRow();
             ue_wrap::FVector2D tl{}, sz{};
